@@ -436,7 +436,12 @@ export function MealLogger({
       <section>
         <div className="mb-2 flex items-baseline justify-between">
           <h2 className="text-footnote text-ink-3">今天已记录</h2>
-          <Link href="/dashboard" className="text-footnote text-accent-blue hover:underline">
+          {/* 触控区同样用伪元素扩到 44px：这是个 20px 高的文字链接，
+              在手机上点起来很容易打偏。 */}
+          <Link
+            href="/dashboard"
+            className="relative text-footnote text-accent-blue after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:underline"
+          >
             看趋势 →
           </Link>
         </div>
@@ -541,7 +546,10 @@ export function MealLogger({
                           <span className="block text-caption-1 text-ink-3">
                             {portionText(m)}
                             {/* 份量可改。做成文字按钮而不是图标：这里空间够，
-                                而且「改」比一个铅笔图标更不容易被忽略。 */}
+                                而且「改」比一个铅笔图标更不容易被忽略。
+                                触控区用 after 伪元素往外扩到 44px 高，而不是加
+                                .touch-target —— 那会把只有 17px 高的这一行直接
+                                撑成 44px，紧凑的列表就被拆散了。视觉不变，手指够得着。 */}
                             <button
                               type="button"
                               onClick={() => {
@@ -549,7 +557,7 @@ export function MealLogger({
                                 setEditing({ id: m.id, grams: m.quantityG });
                               }}
                               aria-label={`改 ${m.foodName} 的份量，当前 ${portionText(m)}`}
-                              className="ml-2 text-caption-1 text-accent-blue transition-opacity hover:opacity-70"
+                              className="relative ml-2 text-caption-1 text-accent-blue transition-opacity after:absolute after:-inset-x-2 after:-inset-y-3.5 after:content-[''] hover:opacity-70"
                             >
                               改
                             </button>
