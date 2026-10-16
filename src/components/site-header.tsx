@@ -41,8 +41,10 @@ export function SiteHeader() {
             </span>
           </Link>
           <ThemeToggle />
+          {/* 「开始记录」原来指向 /login —— 已登录的人点它会被弹回 /dashboard，
+              等于白点一下。它想说的其实是「去记一顿」，所以改成直接进记录页。 */}
           <Link
-            href="/login"
+            href="/log/meal"
             className="inline-flex h-11 items-center text-on-accent transition-opacity hover:opacity-90"
           >
             {/* 主按钮用品牌色实心块。这里用了 --on-accent（纯白）压色块，
@@ -52,6 +54,15 @@ export function SiteHeader() {
              * 需要严格达标的场景（正文、长段落）用 --brand-text 那一档。 */}
             <span className="inline-flex h-9 items-center rounded-full bg-brand px-4 text-subhead font-semibold">
               开始记录
+            </span>
+          </Link>
+          <Link
+            href="/settings"
+            aria-label="设置"
+            className="inline-flex h-11 items-center text-ink-2 transition-colors hover:text-ink"
+          >
+            <span className="inline-flex h-9 items-center rounded-full px-3 text-subhead">
+              设置
             </span>
           </Link>
         </div>

@@ -47,6 +47,34 @@ async function currentOrigin(): Promise<string> {
   return `${proto}://${host}`;
 }
 
+/** Supabase 没配好时该说什么。
+ *
+ * 没配有两个完全不同的原因，给的话也必须完全不同：
+ *
+ *   本地开发 → devUser() 接管，不用登录，如实说
+ *   线上漏配 → devUser() 被 NODE_ENV 那道锁挡掉，**发不出链接也登不进去**，
+ *              这时必须说出「去补环境变量」，否则用户会照着
+ *              「直接打开 /dashboard」的提示去点，被弹回登录页，
+ *              然后陷入「点了没反应」的死循环，永远查不到真正原因。
+ *
+ * 别用 NODE_ENV 直接判断 —— isDevUserActive() 才是单一真相来源，
+ * 它和 devUser() 的三道锁一一对应。抽成函数是为了让两个入口
+ * （发链接 / 密码登录）共用同一份判断，不会各写一套然后漂移。 */
+function notConfiguredState(): LoginState {
+  return isDevUserActive()
+    ? {
+        status: 'error',
+        message: '本地开发模式不需要登录（已自动使用开发用户）。直接打开 /dashboard 即可。',
+      }
+    : {
+        status: 'error',
+        message:
+          '服务端没配好登录功能：缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_ANON_KEY，' +
+          '所以谁也登不进去。如果是你自己部署的，去 Vercel 的项目设置里补上这两个变量，然后重新部署一次' +
+          '（改环境变量不会自动生效）。',
+      };
+}
+
 /** 发送登录链接。配合客户端的 useActionState 使用。 */
 export async function sendMagicLink(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const email = String(formData.get('email') ?? '')
@@ -57,30 +85,7 @@ export async function sendMagicLink(_prev: LoginState, formData: FormData): Prom
     return { status: 'error', message: '邮箱格式看起来不对，检查一下？' };
   }
 
-  if (!isSupabaseConfigured()) {
-    /* 没配 Supabase 有两个完全不同的原因，给的话也必须完全不同：
-     *
-     *   本地开发 → devUser() 接管，不用登录，如实说
-     *   线上漏配 → devUser() 被 NODE_ENV 那道锁挡掉，**发不出链接也登不进去**，
-     *              这时必须说出「去补环境变量」，否则用户会照着
-     *              「直接打开 /dashboard」的提示去点，被弹回登录页，
-     *              然后陷入「点了没反应」的死循环，永远查不到真正原因。
-     *
-     * 别用 NODE_ENV 直接判断 —— isDevUserActive() 才是单一真相来源，
-     * 它和 devUser() 的三道锁一一对应。 */
-    return isDevUserActive()
-      ? {
-          status: 'error',
-          message: '本地开发模式不需要登录（已自动使用开发用户）。直接打开 /dashboard 即可。',
-        }
-      : {
-          status: 'error',
-          message:
-            '服务端没配好登录功能：缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_ANON_KEY，' +
-            '所以谁也登不进去。如果是你自己部署的，去 Vercel 的项目设置里补上这两个变量，然后重新部署一次' +
-            '（改环境变量不会自动生效）。',
-        };
-  }
+  if (!isSupabaseConfigured()) return notConfiguredState();
 
   const supabase = await createSupabaseServerClient();
   const origin = await currentOrigin();
@@ -109,6 +114,66 @@ export async function sendMagicLink(_prev: LoginState, formData: FormData): Prom
     status: 'sent',
     message: `登录链接已发到 ${email}。去邮箱点开它就能进——链接只能用一次，15 分钟内有效。`,
   };
+}
+
+/** 用邮箱 + 密码登录。
+ *
+ * 为什么在「只用魔法链接」之外还要这一条：
+ *
+ *   1. **魔法链接依赖发信，发信会坏。** Supabase 自带发信服务对免费档有
+ *      每小时几封的硬限制，而且官方明确说它不适合生产用。一旦用户点了
+ *      三次「发登录链接」，接下来一小时谁都进不来 —— 密码登录是那条
+ *      不依赖第三方的备用通道。收不到信的账号（比如用 GitHub 的
+ *      noreply 地址注册的）也只有这条路能进。
+ *   2. 天天要记一顿饭的工具，每天先去翻邮箱点一次链接是不现实的。
+ *
+ * 代价是密码该有的那些责任：强度、找回、复用、泄露。这里只做了最基本的一条
+ * —— 交给 Supabase 校验（它内部用 bcrypt，明文不落库），并把错误话说得
+ * 笼统到不构成账号枚举（不区分「邮箱不存在」和「密码不对」）。 */
+export async function signInWithPassword(
+  _prev: LoginState,
+  formData: FormData,
+): Promise<LoginState> {
+  const email = String(formData.get('email') ?? '')
+    .trim()
+    .toLowerCase();
+  const password = String(formData.get('password') ?? '');
+
+  if (!emailRe.test(email)) {
+    return { status: 'error', message: '邮箱格式看起来不对，检查一下？' };
+  }
+  /* 只挡明显太短的。真正的强度规则交给 Supabase ——
+   * 在这里自创一套规则，会在两边不一致时让用户莫名登不进去。 */
+  if (password.length < 6) {
+    return { status: 'error', message: '密码至少 6 位。' };
+  }
+
+  if (!isSupabaseConfigured()) return notConfiguredState();
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    console.error('[signInWithPassword]', error.message);
+
+    /* 输错密码是高频动作（手滑、记错哪一个密码），限流也是真的会触发。
+     * 这两种要说人话，其余一律笼统 —— 见函数头注释。 */
+    if (error.code === 'over_request_rate_limit') {
+      return { status: 'error', message: '试得太频繁了，等一分钟再试。' };
+    }
+    if (error.message.toLowerCase().includes('email not confirmed')) {
+      return {
+        status: 'error',
+        message: '这个邮箱还没确认过。先用「邮件链接」登一次，再去设置里设密码。',
+      };
+    }
+    return { status: 'error', message: '邮箱或密码不对。' };
+  }
+
+  /* 登录态变了，首页和控制台的缓存都得作废。
+   * redirect 放最后 —— 它靠抛异常中断执行，放前面后面这些都不会跑。 */
+  revalidatePath('/', 'layout');
+  redirect('/dashboard');
 }
 
 /** 退出登录。 */
