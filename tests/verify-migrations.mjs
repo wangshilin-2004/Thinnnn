@@ -112,6 +112,7 @@ const statements0003 = runMigration('0003_seed_foods.sql');
 const statements0004 = runMigration('0004_foods_integrity_checks.sql');
 const statements0005 = runMigration('0005_harden_grants_and_cascade_fix.sql');
 const statements0006 = runMigration('0006_summary_target_snapshot.sql');
+const statements0007 = runMigration('0007_fix_account_deletion.sql');
 
 let migrationError = null;
 try {
@@ -135,6 +136,9 @@ try {
 
   for (const stmt of statements0006) await db.exec(stmt);
   console.log(`  · 0006_summary_target_snapshot.sql 执行完成（${statements0006.length} 条语句）`);
+
+  for (const stmt of statements0007) await db.exec(stmt);
+  console.log(`  · 0007_fix_account_deletion.sql 执行完成（${statements0007.length} 条语句）`);
 } catch (e) {
   migrationError = e;
 }
@@ -1033,6 +1037,13 @@ check(
 //  以后再有迁移重定义函数，同样要在这一段之后补跑最新那一个。
 for (const stmt of statements0006) await db.exec(stmt);
 
+//  同一条道理也适用于 0007：它重定义了 sync_one_weight。
+//  当前 0005 只对它做 REVOKE、没有重新定义，所以函数体没被打回去；
+//  但这里仍然显式补跑一次 —— 理由和上面一样，是为了让这条规则【不依赖
+//  某个老迁移恰好没碰这个函数】。哪天有人在 0005 里补上函数定义，
+//  这一行就是唯一能救回 0007 的地方。
+for (const stmt of statements0007) await db.exec(stmt);
+
 // ═══════════════════════════════════════════════════════════════════════
 //  【J】0006：daily_summary.target_kcal 的快照语义
 // ═══════════════════════════════════════════════════════════════════════
@@ -1149,6 +1160,110 @@ check(
   Number(j4?.weight_kg) === 79.4,
   `实际 ${j4?.weight_kg}`,
 );
+
+// ═══════════════════════════════════════════════════════════════════════
+//  【K】0007：记过体重的账号也能被删掉
+// ═══════════════════════════════════════════════════════════════════════
+section('【K】0007：记过体重的账号也能被删掉');
+
+//  这一节守的是 I1【漏掉的那个数据形状】—— 也是一个值得记住的教训：
+//    · I1 确实测了「删用户」，建的用户只有 meal_items、没有 measurements，
+//      走的是 measurements 之外的路径，由 refresh_daily_summary 兜底
+//      （那半 0005 已经修了）；
+//    · 而 measurements 上挂着【另一个】AFTER DELETE 触发器
+//      → trg_measurements_sync_weight → sync_one_weight，那一半没人动过。
+//  于是 I1 一直是绿的，线上却删不掉任何记过体重的账号。
+//
+//  结论：一个「删用户」测试并不能证明删用户是安全的，
+//  它只能证明【那个用户恰好带着的那份数据】是安全的。
+//  用户身上挂几个触发器，就得建几种数据形状各测一遍。
+//
+//  线上真实报错（Supabase 面板与 admin API 都只回一句含糊的
+//  "Database error deleting user"，看不出原因）：
+//    insert or update on table "daily_summary" violates foreign key constraint
+//    "daily_summary_user_id_fkey"   (code 23503)
+//    where: SQL function "sync_one_weight" statement 1
+//           SQL statement "SELECT public.sync_one_weight(OLD.user_id, OLD.measured_on)"
+//           PL/pgSQL function public.trg_measurements_sync_weight() line 5 at PERFORM
+const weighUserId = (
+  await db.query(`insert into auth.users (email) values ('delete-with-weight@example.invalid') returning id`)
+).rows[0].id;
+
+//  只记体重、不记餐 —— 这就是线上那个删不掉的账号的形状。
+await actAs(weighUserId);
+await db.query(
+  `insert into public.measurements (user_id, metric, measured_on, value, unit)
+   values ($1,'weight','2026-12-10',79.4,'kg')`,
+  [weighUserId],
+);
+
+await actAsAdmin();
+const kBefore = (
+  await db.query(`select count(*)::int as n from public.daily_summary where user_id=$1`, [weighUserId])
+).rows[0].n;
+check(
+  '【0007】删用户前 daily_summary 确实有行（否则下面的删除是空跑假阳性）',
+  kBefore === 1,
+  `实际 ${kBefore} 行`,
+);
+
+let weighDelErr = null;
+try {
+  await db.query(`delete from auth.users where id=$1`, [weighUserId]);
+} catch (e) {
+  weighDelErr = `${e.message}${e.where ? ` | where: ${String(e.where).replace(/\s+/g, ' ')}` : ''}`;
+}
+check(
+  '【0007】记过体重的账号能被删掉（sync_one_weight 的 WHERE EXISTS 守卫生效）',
+  weighDelErr === null,
+  weighDelErr ?? '',
+);
+
+const kLeft = (
+  await db.query(
+    `select (select count(*)::int from public.profiles      where id=$1)
+          + (select count(*)::int from public.measurements  where user_id=$1)
+          + (select count(*)::int from public.daily_summary where user_id=$1) as n`,
+    [weighUserId],
+  )
+).rows[0].n;
+check('【0007】级联删干净：profiles / measurements / daily_summary 全 0 行', kLeft === 0, `实际残留 ${kLeft} 行`);
+
+//  K2：守护条件不能误伤正常记体重。
+//  这一条是防「修好了删除，却把正常写入也堵死」——
+//  WHERE EXISTS 写错表名或写反的话，这里会变红，而上面全绿。
+const stillWeighId = (
+  await db.query(`insert into auth.users (email) values ('still-can-weigh@example.invalid') returning id`)
+).rows[0].id;
+await actAs(stillWeighId);
+await db.query(
+  `insert into public.measurements (user_id, metric, measured_on, value, unit)
+   values ($1,'weight','2026-12-11',81.2,'kg')`,
+  [stillWeighId],
+);
+await actAsAdmin();
+const k2 = (
+  await db.query(
+    `select weight_kg from public.daily_summary where user_id=$1 and log_date='2026-12-11'`,
+    [stillWeighId],
+  )
+).rows[0]?.weight_kg;
+check('【0007】账号还在时，记体重照旧能写进汇总行（修复没有误伤）', Number(k2) === 81.2, `实际 ${k2}`);
+
+//  K3：更新体重那条分支（ON CONFLICT DO UPDATE）也得活着。
+await actAs(stillWeighId);
+await db.query(
+  `update public.measurements set value = 80.5 where user_id=$1 and measured_on='2026-12-11'`,
+  [stillWeighId],
+);
+await actAsAdmin();
+const k3 = (
+  await db.query(
+    `select weight_kg from public.daily_summary where user_id=$1 and log_date='2026-12-11'`,
+    [stillWeighId],
+  )
+).rows[0]?.weight_kg;
+check('【0007】改体重能同步覆盖汇总行（ON CONFLICT 分支未被守护条件挡住）', Number(k3) === 80.5, `实际 ${k3}`);
 
 // ═══════════════════════════════════════════════════════════════════════
 //  结果
