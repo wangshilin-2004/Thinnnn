@@ -99,8 +99,46 @@ for (const file of files) {
   });
 }
 
+/* ── 第二遍：每个导出的 action 到底有没有入口 ────────────────────────
+ *
+ * 为什么值得单独查：'use server' 的导出不只是「一个函数」，它是一个
+ * **可以从浏览器 POST 到的公开写接口**。没有调用方 = 一个没有界面入口、
+ * 却对外开着的写接口，而且没人会因为改动它而跑测试。
+ *
+ * 真实案例：updateMealQuantity 就这样躺了很久 —— 实现是完整的（有 zod、
+ * 有 requireUser、有 RLS），只是从来没接到界面上。用户记错份量时唯一的
+ * 办法是删掉重记。这种「写完忘了接线」在单人项目里几乎必然发生。
+ *
+ * 已知局限：这是按名字在**全文**里找，注释里提一句也算「有调用方」。
+ * 够用 —— 要抓的是「一处都没有」，那种情况下连注释都不会提它。
+ */
+const allSources = walk(SRC).map((f) => [f, readFileSync(f, 'utf8')]);
+const orphans = [];
+
+for (const file of files) {
+  const src = allSources.find(([f]) => f === file)[1];
+  for (const m of src.matchAll(/^export\s+async\s+function\s+(\w+)/gm)) {
+    const name = m[1];
+    if (name === 'default') continue;
+    const re = new RegExp(`\\b${name}\\b`);
+    const callers = allSources.filter(([f, s]) => f !== file && re.test(s));
+    if (callers.length === 0) orphans.push({ file: relative(ROOT, file), name });
+  }
+}
+
 console.log(`\n  扫描了 ${files.length} 个 'use server' 文件，共 ${checked} 条顶层导出`);
 for (const f of files) console.log(`    · ${relative(ROOT, f)}`);
+
+if (orphans.length) {
+  console.log(`\n  ✗ ${orphans.length} 个 action 没有任何调用方（等于没有入口的公开写接口）：\n`);
+  for (const o of orphans) {
+    console.log(`    ${o.file}`);
+    console.log(`      ${o.name}()\n`);
+  }
+  console.log('  要么把它接到界面上，要么删掉。');
+  console.log('  确实需要留着（比如给将来的界面预留），就在别处引用一次并写清原因。\n');
+  process.exit(1);
+}
 
 if (problems.length) {
   console.log(`\n  ✗ 发现 ${problems.length} 处违规：\n`);
