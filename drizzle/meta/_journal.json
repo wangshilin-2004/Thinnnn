@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792135649145,
+      "tag": "0000_init_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792135712322,
+      "tag": "0001_security_and_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792135993887,
+      "tag": "0002_add_slug_and_label_uniqueness",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792136126386,
+      "tag": "0003_seed_foods",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792136209507,
+      "tag": "0004_foods_integrity_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792138283910,
+      "tag": "0005_harden_grants_and_cascade_fix",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792138719918,
+      "tag": "0006_summary_target_snapshot",
+      "breakpoints": true
+    }
+  ]
+}

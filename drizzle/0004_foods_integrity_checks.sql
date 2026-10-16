@@ -1,0 +1,2 @@
+ALTER TABLE "foods" ADD CONSTRAINT "foods_builtin_needs_slug" CHECK ("foods"."owner_id" is not null or "foods"."slug" is not null);--> statement-breakpoint
+ALTER TABLE "foods" ADD CONSTRAINT "foods_name_not_blank" CHECK (length(btrim("foods"."name")) > 0);

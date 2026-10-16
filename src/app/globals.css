@@ -1,0 +1,839 @@
+/* ============================================================================
+ * globals.css · 设计 Token 基座
+ * ----------------------------------------------------------------------------
+ * 规格来源：docs/03-设计系统.md（决策稿） + research/02-苹果视觉语言.md（数值稿）
+ *
+ * 这是整个项目唯一一份「颜色/字号/圆角/阴影/间距」的真相来源。
+ * 组件里不要写死任何 hex，一律用这里导出的 Tailwind 工具类（bg-canvas、
+ * text-ink、border-hairline……），改主题时只需要动这一个文件。
+ *
+ * 三条不可动摇的约束（违反任何一条都会在真机上出问题）：
+ *   1. 不引入 SF Pro 字体文件 —— 只用 -apple-system 调用访问者本机字体（见 §四 字体栈）
+ *   2. 中文字距必须为 0 —— 负字距是给大号拉丁文用的（见 §五 字距）
+ *   3. 输入框字号 ≥ 16px —— 小于 16px 时 iOS Safari 聚焦会自动放大整页（见 §七 iOS）
+ * ========================================================================== */
+
+@import 'tailwindcss';
+
+/* ----------------------------------------------------------------------------
+ * 深色模式：class 策略，不是媒体查询
+ *
+ * 为什么不用 prefers-color-scheme：媒体查询无法被用户覆盖。用户在暗环境里
+ * 也可能想用浅色（或者反过来），主题必须能在 UI 里手动切换并持久化。
+ * 为什么是 :where()：它把选择器优先级压到 0，这样 `dark:bg-x` 不会因为
+ * 优先级过高而没法被普通工具类覆盖，也避免和 @layer 的排序打架。
+ * -------------------------------------------------------------------------- */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================================
+ * 一、语义 token 的真身（浅色值）
+ * ----------------------------------------------------------------------------
+ * 这一层是普通 CSS 变量，不叫 --color-*，所以 Tailwind 不会为它们生成工具类。
+ * 它们只负责「同一个语义在两种主题下取不同的值」这件事——
+ * 主题切换 = 覆盖这一层变量，@theme inline 那层完全不用动。
+ *
+ * ⚠️ 为什么整块包在 @layer base 里（很重要，别去掉）：
+ *    Tailwind v4 输出的是 `@layer theme, base, components, utilities;` 这套
+ *    分层结构，所有工具类都在 utilities 层里。而 **未分层的规则永远赢过
+ *    任何分层规则**，跟选择器优先级无关。如果不写 @layer，这些 :root 变量
+ *    和下面的组件类就会变成"未分层"，导致 <div class="content-max p-4">
+ *    里的 p-4 永远被 .content-max 的 padding 盖掉——而且报错都不报，
+ *    纯粹的静默行为异常。写进 base 层，工具类才能正常覆盖它们。
+ * ========================================================================== */
+@layer base {
+  :root {
+  /* ---- 表面 ---- */
+  --canvas: #ffffff; /* 页面底色 */
+  --canvas-subtle: #f5f5f7; /* 分区底色，用于把内容从白底里「垫」出来 */
+  --card: #ffffff; /* 卡片 */
+  --raised: #ffffff; /* 浮层/弹窗/下拉 */
+  --sunken: #f2f2f7; /* 凹陷区（进度槽、输入框底） */
+  --separator: rgba(60, 60, 67, 0.2); /* 列表分隔线（半透明版） */
+  --separator-opaque: #c6c6c8; /* 需要不透明时用（叠在图片上等） */
+  --hairline: rgba(60, 60, 67, 0.29); /* 卡片描边，比分隔线略重一点点 */
+  --border-glass: rgba(255, 255, 255, 0.8); /* 浅色玻璃的亮边 */
+  --separator-glass: rgba(255, 255, 255, 0.05); /* 玻璃卡片内部的分隔线 */
+
+  /* ---- 文字 ----
+   * 对比度实测（research §3.1）：#1D1D1F/#FFF = 16.83:1（AAA）
+   *                              #6E6E73/#FFF =  5.07:1（AA）
+   *                              #8E8E93/#FFF =  3.26:1（❌ 正文不达标） */
+  --ink: #1d1d1f; /* 正文。暖黑，不用纯黑——纯黑在视网膜屏上会「咬眼」 */
+  --ink-2: #6e6e73; /* 次要文字 */
+  --ink-3: #8e8e93; /* 仅限 ≥18px 或图标。13px 说明文字用它 = 对比度不足 */
+  --ink-4: rgba(60, 60, 67, 0.3); /* 极弱：禁用态文字、占位符、图表网格标签 */
+  --on-accent: #ffffff; /* 压在强调色块上的文字 */
+
+  /* ---- 系统色（填充/图形用，浅色档） ----
+   * ⚠️ 这一组在浅色底上几乎全部不满足 4.5:1（#34C759 只有 2.22:1，
+   *    #FFCC00 只有 1.51:1）。它们的唯一合法用途是**填充**：
+   *    柱子、圆环、标签底色、≥24px 的大数字。
+   *    绝不能用它们写小字正文——要写字请用下面的 *-text 加深版。 */
+  --system-blue: #007aff;
+  --system-green: #34c759;
+  --system-red: #ff3b30;
+  --system-orange: #ff9500;
+  --system-yellow: #ffcc00;
+  --system-purple: #af52de;
+  --system-pink: #ff2d55;
+  --system-teal: #30b0c7;
+  --system-indigo: #5856d6;
+  --system-mint: #00c7be;
+  --system-cyan: #32ade6;
+  --system-brown: #a2845e;
+  --system-gray: #8e8e93;
+
+  /* ---- 强调色·文字版（浅色模式专用加深） ----
+   * 这就是为什么浅色模式要多一套变量：iOS 系统色是「为暗背景 + 大面积填充」
+   * 调的，直接拿来当白底上的小字，色盲/近视用户读不动，WCAG 也不及格。
+   * 加深到下面这组后才重新拿到 4.5:1+。 */
+  --accent-blue-text: #0040dd;
+  --accent-green-text: #248a3d; /* 达标 / 趋势朝目标 */
+  --accent-red-text: #d70015; /* 危险 / 超限 */
+  --accent-orange-text: #c93400; /* 提醒 / 背离目标 */
+
+  /* ---- 品牌 ----
+   * #FF2D55 只做填充（浅色底 3.65:1，不够写字），
+   * 要写粉色的字用深化的 #D7004D。 */
+  --brand: #ff2d55;
+  --brand-text: #d7004d;
+
+  /* ---- 数据可视化语义色 ----
+   * 三大营养素用 蓝/黄/紫：这是红绿色盲下仍可区分的组合。
+   * 红绿留给「摄入 vs 消耗」这一组对比，其它数据不再依赖红绿。
+   * ⚠️ 颜色不是唯一编码：营养素额外用形态区分（实心/斜纹/点状），
+   *    体重趋势永远同时给「颜色 + 箭头 + ± 符号」。 */
+  --data-intake: var(--system-orange); /* 热量摄入 */
+  --data-burn: var(--system-pink); /* 热量消耗 / 运动 */
+  --data-protein: var(--system-blue); /* 蛋白质 */
+  --data-carb: var(--system-yellow); /* 碳水 */
+  --data-fat: var(--system-purple); /* 脂肪 */
+  --data-weight: var(--system-pink); /* 体重主线 */
+
+  /* ---- 趋势方向色 ----
+   * 决策 B（docs/03 §1）：这是减脂应用，减重才是目标达成，所以
+   *   「朝目标方向 = 绿」「背离目标 = 橙」。
+   * 没有沿用中文股票语境的「涨红跌绿」，理由是那会让「体重下降」显示成
+   * 警示红，与 ADR-004（防止用户在体重波动时焦虑弃用）直接冲突；
+   * 上涨用橙不用红，因为涨 0.5kg 可能只是生理期/盐分，红色（danger）语气过重。
+   *
+   * 这两个变量是**可逆开关**：将来想翻转，改这两行就行，不用动组件。
+   * 组件里的用法固定为「--data-trend-good / --data-trend-bad」，
+   * 永远不要把 good/bad 直接绑到某个方向。 */
+  --data-trend-good: var(--system-green); /* 朝目标方向（减脂 → 下降） */
+  --data-trend-bad: var(--system-orange); /* 背离目标（减脂 → 上升） */
+  --data-success: var(--system-green); /* 评价色（「已达成目标」），与方向色解耦 */
+  --data-warning: var(--system-orange);
+  --data-danger: var(--system-red);
+
+  /* ---- 阴影 ----
+   * 浅色模式才用阴影分层；深色模式靠「亮度差 + 1px 亮边」（见 .dark 块）。
+   * 黑底上的黑阴影等于没有，只会白白多一次合成开销。
+   *
+   * ⚠️ 这里的变量名故意叫 --elevation-* 而不是 --shadow-*：Tailwind v4 的
+   *    --shadow-* 是它自己的主题命名空间（默认值见 tailwindcss/theme.css），
+   *    如果我们在这里也叫 --shadow-sm，@theme 里再写 --shadow-sm: var(--shadow-sm)
+   *    就成了**自引用**，var() 会解析成无效值、阴影直接消失。
+   *    分开命名后，@theme inline 里做一次映射即可（见下方 §四）。 */
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 1px rgba(0, 0, 0, 0.02);
+  --elevation-2: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --elevation-3: 0 12px 32px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --elevation-4: 0 24px 64px rgba(0, 0, 0, 0.14), 0 4px 16px rgba(0, 0, 0, 0.06);
+
+  /* ---- 玻璃 ----
+   * 深色是默认模式，但浅色也得有玻璃配方，否则浅色下玻璃会变成一块黑疙瘩。
+   * 四层配方见文件末尾 .glass。 */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.8);
+  --glass-inner-hi: rgba(255, 255, 255, 0.7);
+  --glass-outer: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --glass-sheen-strong: rgba(255, 255, 255, 0.55);
+  --glass-sheen-soft: rgba(255, 255, 255, 0.18);
+
+  /* ---- 动效曲线 ----
+   * ease-out-expo 是「苹果感」的核心：起步极快、尾巴极长，
+   * 元素像是被轻轻放到位，而不是匀速滑过去。 */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-in-back: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-base: 280ms;
+  --duration-slow: 450ms;
+
+  /* ---- 字体 ----
+   * ⚠️ 法律红线：SF Pro 的授权只允许做「Apple 平台的 UI mockup」，
+   *    明确禁止 website content。所以这里**不引入任何 SF Pro 字体文件**，
+   *    只用 -apple-system / BlinkMacSystemFont 调用**访问者本机已安装**的字体——
+   *    这是「使用」而不是「分发」，合规，而且 Mac 上看到的依然是真 SF Pro。
+   * Inter 作兜底（SIL OFL 1.1，允许自托管），给 Windows / Android / Linux
+   * 一致的观感；它的小字号优化和字重梯度都比 Geist 更适合做 Display 档的粗细对比。
+   * 中文字体**只做 fallback，绝不主动下载**：思源黑体动辄 5–10MB，
+   * 为了首屏几毫秒的效果去拉一个几 MB 的字体是纯亏，用户设备上的
+   * 苹方 / 微软雅黑本来就很好。 */
+  /* 字体栈里【故意不写】"SF Pro Text"/"SF Pro Display"：
+   * 那是苹果的授权字体，网页端正确做法是调用访客自己系统里的那份
+   * （-apple-system / BlinkMacSystemFont 就是在做这件事），而不是指定字体名。
+   * 指定字体名既拿不到更优的渲染，还可能踩授权的坑。
+   * Inter 是自托管的兜底（@fontsource-variable/inter），非苹果设备用它，
+   * 保证字重、字宽、数字形态和苹果设备不会有明显落差。 */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Inter', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans SC', system-ui,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Noto Color Emoji';
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+/* ============================================================================
+ * 二、深色模式（默认模式）
+ * ----------------------------------------------------------------------------
+ * 只覆盖「取值不同」的变量；@theme inline 那一层不需要任何重复。
+ * 加 [data-theme='dark'] 是为了将来做「跟随系统」时留一条不需要改 class 的路。
+ * ========================================================================== */
+.dark,
+[data-theme='dark'] {
+  --canvas: #000000; /* 纯黑：OLED 上像素真的熄灭，比 #0A0A0A 更「沉」 */
+  --canvas-subtle: #1c1c1e;
+  --card: #1c1c1e;
+  --raised: #2c2c2e; /* 浮层比卡片亮一档，靠亮度差分层 */
+  --sunken: #141416;
+  --separator: rgba(84, 84, 88, 0.55);
+  --separator-opaque: #38383a;
+  --hairline: rgba(255, 255, 255, 0.1);
+  --border-glass: rgba(255, 255, 255, 0.1);
+  --separator-glass: rgba(255, 255, 255, 0.06);
+
+  /* #F5F5F7/#000 = 19.29:1（AAA）；#98989D/#000 = 7.31:1（AAA）
+   * #8E8E93 放在 #1C1C1E 卡片上是 5.22:1，深色模式下可以放心当正文用。
+   * 所以深色下 ink-3 与 ink-2 是同一个值：暗背景给了更多对比度预算。 */
+  --ink: #f5f5f7;
+  --ink-2: #98989d;
+  --ink-3: #8e8e93;
+  --ink-4: rgba(235, 235, 245, 0.3);
+  --on-accent: #ffffff;
+
+  /* 深色系统色：全部 ≥ 4.6:1，可以安全地当文字色，所以 *-text 直接指回系统色。 */
+  --system-blue: #0a84ff;
+  --system-green: #30d158;
+  --system-red: #ff453a;
+  --system-orange: #ff9f0a;
+  --system-yellow: #ffd60a;
+  --system-purple: #bf5af2;
+  --system-pink: #ff375f;
+  --system-teal: #40c8e0;
+  --system-indigo: #5e5ce6;
+  --system-mint: #63e6e2;
+  --system-cyan: #64d2ff;
+  --system-brown: #ac8e68;
+  --system-gray: #98989d;
+
+  --accent-blue-text: #0a84ff;
+  --accent-green-text: #30d158;
+  --accent-red-text: #ff453a;
+  --accent-orange-text: #ff9f0a;
+
+  --brand: #ff375f;
+  --brand-text: #ff375f;
+
+  /* 深色下阴影要更重才看得出来（背景本身就是黑的），
+   * 但真正承担分层职责的是 --hairline 那条 1px 亮边。 */
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elevation-2: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --elevation-3: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --elevation-4: 0 24px 64px rgba(0, 0, 0, 0.7);
+
+  --glass-bg: rgba(28, 28, 30, 0.55); /* surface/card @ 55%，不是 100%：玻璃要透 */
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-inner-hi: rgba(255, 255, 255, 0.12);
+  --glass-outer: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --glass-sheen-strong: rgba(255, 255, 255, 0.14);
+  --glass-sheen-soft: rgba(255, 255, 255, 0.04);
+
+  /* 深色下浏览器原生控件（滚动条、表单控件）也跟着切成深色 */
+  color-scheme: dark;
+  }
+}
+
+/* ============================================================================
+ * 三、把 token 接进 Tailwind
+ * ----------------------------------------------------------------------------
+ * @theme inline 的 inline 关键字在这里是必须的：它让生成的工具类直接内联
+ * var(--canvas) 本身，而不是先拷贝一份到 --color-canvas 再引用。
+ * 少了 inline，主题切换就会失效——因为 Tailwind 会在编译期把浅色值固化下来。
+ *
+ * 工具类命名：bg-canvas / bg-card / bg-raised / bg-sunken / bg-canvas-subtle
+ *            text-ink / text-ink-2 / text-ink-3 / text-ink-4 / text-on-accent
+ *            border-hairline / border-separator / divide-separator
+ * ========================================================================== */
+@theme inline {
+  /* ---- 表面 ---- */
+  --color-canvas: var(--canvas);
+  --color-canvas-subtle: var(--canvas-subtle);
+  --color-card: var(--card);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+
+  /* ---- 文字 ---- */
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-on-accent: var(--on-accent);
+
+  /* ---- 描边 / 分隔线 ----
+   * 苹果式的分层靠 1px 发丝线，不靠阴影。border-hairline 是这个项目里
+   * 出现频率最高的装饰类，别用 border-gray-200 之类的调色板色代替。 */
+  --color-hairline: var(--hairline);
+  --color-separator: var(--separator);
+  --color-separator-opaque: var(--separator-opaque);
+  --color-separator-glass: var(--separator-glass);
+
+  /* ---- 系统色（填充） ---- */
+  --color-sys-blue: var(--system-blue);
+  --color-sys-green: var(--system-green);
+  --color-sys-red: var(--system-red);
+  --color-sys-orange: var(--system-orange);
+  --color-sys-yellow: var(--system-yellow);
+  --color-sys-purple: var(--system-purple);
+  --color-sys-pink: var(--system-pink);
+  --color-sys-teal: var(--system-teal);
+  --color-sys-indigo: var(--system-indigo);
+  --color-sys-mint: var(--system-mint);
+  --color-sys-cyan: var(--system-cyan);
+  --color-sys-brown: var(--system-brown);
+  --color-sys-gray: var(--system-gray);
+
+  /* ---- 强调色·文字版（浅色下必须用这一组当文字） ---- */
+  --color-accent-blue: var(--accent-blue-text);
+  --color-accent-green: var(--accent-green-text);
+  --color-accent-red: var(--accent-red-text);
+  --color-accent-orange: var(--accent-orange-text);
+
+  /* ---- 品牌 ---- */
+  --color-brand: var(--brand);
+  --color-brand-text: var(--brand-text);
+
+  /* ---- 数据可视化语义色（图表里直接 fill="var(--color-data-protein)"） ---- */
+  --color-data-intake: var(--data-intake);
+  --color-data-burn: var(--data-burn);
+  --color-data-protein: var(--data-protein);
+  --color-data-carb: var(--data-carb);
+  --color-data-fat: var(--data-fat);
+  --color-data-weight: var(--data-weight);
+  --color-data-trend-good: var(--data-trend-good);
+  --color-data-trend-bad: var(--data-trend-bad);
+  --color-data-success: var(--data-success);
+  --color-data-warning: var(--data-warning);
+  --color-data-danger: var(--data-danger);
+
+  /* ---- 字体 ---- */
+  /* 说明：--font-sans 这里写成了 var(--font-sans)，看起来像自引用，其实是
+   * 两个不同层里的同名变量——@layer theme 里的这一个引用 @layer base 的 :root
+   * 里那一个（@layer theme 声明在 @layer base 之前，所以能正确解析到 :root 的值）。
+   * 别「顺手修掉」它：删掉这行，font-sans 工具类就没有来源了。 */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* ---- 阴影 ----
+   * 把运行时的 --elevation-* 映射到 Tailwind 的 shadow-* 命名空间，
+   * 这样组件里用 shadow-sm / shadow-lg 拿到的就是我们的四级苹果阴影，
+   * 而不是 Tailwind 默认那套偏冷的 rgb(0 0 0 / 0.1)。
+   * 用 inline 是必须的：深浅两套值只在 :root / .dark 里不同，
+   * 只有内联 var() 才能跟着 class 切换。 */
+  --shadow-sm: var(--elevation-1);
+  --shadow-md: var(--elevation-2);
+  --shadow-lg: var(--elevation-3);
+  --shadow-xl: var(--elevation-4);
+  --shadow-glass: var(--glass-outer);
+}
+
+/* ============================================================================
+ * 三之二、图表色板：把数据色「真的」输出成 CSS 变量
+ * ----------------------------------------------------------------------------
+ * 为什么需要单独一块？因为上面用了 @theme inline。inline 的含义是「用到的
+ * 时候把值内联进工具类」，代价是它【不会】在 CSS 里生成 --color-* 变量本身。
+ * 这对普通 UI 没影响（bg-card 照样能用），但图表不行：
+ * Recharts 是 SVG，颜色要写成 fill="var(--color-data-protein)" 这种字符串，
+ * 而 SVG 的 fill 属性只能读 CSS 变量，读不到 Tailwind 的工具类。
+ * 所以这里用 @theme static（static = 即使没有工具类引用也强制输出变量），
+ * 把数据色补成真实变量。docs/03 里定的图表写法就是 var(--color-data-*)，
+ * 变量名必须一字不差，否则图表会静默变成黑色（fill 解析失败不报错）。
+ *
+ * 注意这里写的是 var(--data-protein) 而不是再抄一遍十六进制：色值只在
+ * 第一节 :root 里定义一次，深浅两套主题切换时图表会跟着变。
+ * 能这样跨引用是因为 @layer theme 声明在 @layer base 之前，
+ * var() 在运行时解析，轮到 theme 层时 :root 里的 --data-* 已经就位。
+ * ========================================================================== */
+@theme static {
+  --color-data-intake: var(--data-intake);
+  --color-data-burn: var(--data-burn);
+  --color-data-protein: var(--data-protein);
+  --color-data-carb: var(--data-carb);
+  --color-data-fat: var(--data-fat);
+  --color-data-weight: var(--data-weight);
+  --color-data-trend-good: var(--data-trend-good);
+  --color-data-trend-bad: var(--data-trend-bad);
+  --color-data-success: var(--data-success);
+  --color-data-warning: var(--data-warning);
+  --color-data-danger: var(--data-danger);
+}
+
+/* ============================================================================
+ * 四、静态 token（不随主题变化，所以放普通 @theme 而不是 inline）
+ * ========================================================================== */
+@theme {
+  /* ---- 圆角 ----
+   * 苹果的圆角是「连续曲率」（squircle），CSS 只能近似成普通圆角。
+   * 在 20px 以上用大圆角能明显拉近观感，这也是卡片 20px、面板 28px 的来源。 */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 20px; /* 卡片 */
+  --radius-xl: 28px; /* 面板 / 玻璃卡片 */
+  --radius-2xl: 36px;
+  --radius-full: 9999px;
+
+  /* ---- 间距（4px 基准网格） ----
+   * ⚠️ 必须在 --spacing-* 命名空间下，工具类才会真的生成。
+   * Tailwind v4 只从 @theme 的「已知命名空间」派生工具类，间距是 --spacing-*。
+   * 早先写成 --space-4：变量确实进了 :root，var(--space-4) 也能用，
+   * 但 p-space-4 / gap-space-4 这类工具类一个都不会生成。编译不报错、
+   * 页面不报错，只是 padding 悄悄变成 0 —— 30 处间距同时失效，
+   * 最后是靠量 DOM 的 getComputedStyle 才发现的。静默失败比报错贵得多。
+   * 工具类名：p-space-6 / gap-space-4 / mb-space-5
+   * 变量名：var(--spacing-space-4) */
+  --spacing-space-0: 0px;
+  --spacing-space-1: 4px; /* 图标与文字之间 */
+  --spacing-space-2: 8px; /* 紧密元素 */
+  --spacing-space-3: 12px; /* 卡片内边距（紧凑） */
+  --spacing-space-4: 16px; /* 手机页面左右边距、标准卡片内边距 */
+  --spacing-space-5: 20px;
+  --spacing-space-6: 24px; /* 卡片之间 */
+  --spacing-space-8: 32px; /* 分组间隔 */
+  --spacing-space-10: 40px;
+  --spacing-space-12: 48px; /* 区块标题与内容之间 */
+  --spacing-space-16: 64px; /* 区块之间（移动端） */
+  --spacing-space-24: 96px; /* 区块之间（桌面端） */
+  --spacing-space-32: 128px; /* 大区块 */
+  --spacing-space-48: 192px; /* keynote 式的「呼吸」间距 */
+
+  /* ---- 字号阶梯 ----
+   * Tailwind v4 的约定：--text-X 定义字号，--text-X--line-height 和
+   * --text-X--letter-spacing 会被同一个 text-X 工具类自动带上。
+   *
+   * 行高取的是 research §4.2 的「中文行高补偿」值（1.5）而不是 SF Pro
+   * 的拉丁指标（1.29）：中文满字面、没有西文那样的升部留白，
+   * 同一行高会明显更挤。西文规范在这里不适用。
+   *
+   * letter-spacing 全部为 0，一个例外都没有 —— 见下面 §五 的长注释。 */
+  --text-display-hero: 96px;
+  --text-display-hero--line-height: 1.05; /* 纯大数字，可以压得很紧 */
+  --text-display-hero--letter-spacing: 0;
+  --text-display-lg: 72px;
+  --text-display-lg--line-height: 1.08;
+  --text-display-lg--letter-spacing: 0;
+  --text-display-md: 56px;
+  --text-display-md--line-height: 1.1;
+  --text-display-md--letter-spacing: 0;
+
+  --text-title-1: 34px;
+  --text-title-1--line-height: 1.3;
+  --text-title-1--letter-spacing: 0;
+  --text-title-2: 28px;
+  --text-title-2--line-height: 1.3;
+  --text-title-2--letter-spacing: 0;
+  --text-title-3: 22px;
+  --text-title-3--line-height: 1.35;
+  --text-title-3--letter-spacing: 0;
+  --text-title-4: 20px;
+  --text-title-4--line-height: 1.35;
+  --text-title-4--letter-spacing: 0;
+
+  --text-headline: 17px;
+  --text-headline--line-height: 1.5;
+  --text-headline--letter-spacing: 0;
+  --text-body: 17px;
+  --text-body--line-height: 1.5;
+  --text-body--letter-spacing: 0;
+  --text-callout: 16px;
+  --text-callout--line-height: 1.5;
+  --text-callout--letter-spacing: 0;
+  --text-subhead: 15px;
+  --text-subhead--line-height: 1.5;
+  --text-subhead--letter-spacing: 0;
+  --text-footnote: 13px;
+  --text-footnote--line-height: 1.5;
+  --text-footnote--letter-spacing: 0;
+  --text-caption-1: 12px;
+  --text-caption-1--line-height: 1.4;
+  --text-caption-1--letter-spacing: 0;
+  --text-caption-2: 11px; /* HIG 的最小字号就是 11pt，不要再往下 */
+  --text-caption-2--line-height: 1.4;
+  --text-caption-2--letter-spacing: 0;
+
+  /* ---- 字重 ----
+   * 中文标题要比拉丁标题轻一档：Apple 的标题常用 600，
+   * 但 CJK 字形笔画密、字面满，600 在中文上会显得糊且重，降到 500 才刚好。 */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ---- 字距 ----
+   * 这两个值只通过工具类使用（tracking-display / tracking-title），
+   * 绝不写进上面的字号阶梯。原因见 §五。 */
+  --tracking-display: -0.02em; /* 仅 ≥56px 的纯拉丁/数字标题 */
+  --tracking-title: -0.01em; /* 仅 20–34px 的纯拉丁标题 */
+  --tracking-body: 0em; /* 正文、以及**所有**中文 */
+
+  /* ---- 阴影 ----
+   * 阴影 token 在 §三 的 @theme inline 里映射（要用 inline，否则主题切换失效）。 */
+
+  /* ---- 动效 ---- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-in-back: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ---- 布局约束 ----
+   * 980px 是苹果官网正文列宽的实测值：再宽，眼睛在换行时找不到下一行的开头。
+   * 720px 是「一行 45–75 个汉字」的舒适阅读宽度，段落类内容用它。
+   * 44px 是 HIG 的触控目标硬要求，不是建议值。 */
+  --container-content: 980px; /* max-w-content */
+  --container-wide: 1200px; /* max-w-wide（数据看板） */
+  --container-measure: 720px; /* max-w-measure（纯文字段落） */
+
+  /* 这几个不是 Tailwind 的命名空间，只作为普通 CSS 变量输出，
+   * 给 .prose-measure / .touch-target / .screen-min 这几个工具类用。 */
+  --content-max: 980px;
+  --content-wide: 1200px;
+  --text-measure: 720px;
+  --touch-min: 44px;
+
+  /* ---- 玻璃模糊半径 ---- */
+  --blur-glass: 24px;
+}
+
+/* ============================================================================
+ * 五、字距：整个设计系统里最容易翻车的一条
+ * ----------------------------------------------------------------------------
+ * 网上流传「Apple 大标题用负 letter-spacing」，但 HIG 的 SF Pro 追踪表实测
+ * 是两端为正、17–20pt 附近最紧；而且**那是 SF Pro 的数值，换成 Inter 就不成立**
+ * （Inter 没有动态光学尺寸轴补偿）。
+ *
+ * 更关键的是中文：汉字是等宽全角方块，letter-spacing 会在**每个汉字之间**
+ * 插入间距——包括本该紧贴的标点。中文一加字距立刻变成「松垮的排版练习稿」。
+ *
+ * 所以规则是硬性的：
+ *   · 正文、以及所有 ≤17px 的文字 → letter-spacing: 0
+ *   · 所有中文（不论字号）→ letter-spacing: 0
+ *   · -0.02em 只作为工具类 .tracking-display 存在，给**大号纯拉丁**标题用
+ *     （比如「−8.2 kg」这种数字展示），由使用者在明确知道内容是拉丁文时手动加。
+ * ========================================================================== */
+@utility tracking-display {
+  letter-spacing: var(--tracking-display);
+}
+
+@utility tracking-title {
+  letter-spacing: var(--tracking-title);
+}
+
+/* ============================================================================
+ * 六、基础层
+ * ========================================================================== */
+@layer base {
+  /* 让 1rem 跟随用户的浏览器字号设置，不要写死 px。
+   * 用户在浏览器里调大字号是无障碍需求，写死 px 等于把它关掉。 */
+  html {
+    font-size: 100%;
+    -webkit-text-size-adjust: 100%; /* iOS 横屏时不要自作主张放大正文 */
+    text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+
+    /* 中英混排关键三件套 */
+    font-synthesis: none; /* 禁止浏览器伪造粗体——中文伪粗体会变「糊」 */
+    text-rendering: optimizeLegibility;
+
+    /* 数字等宽：体重、热量这些值会随动画每帧变化，
+     * 不等宽的话整行文字会左右抖动（见 .tabular 工具类）。 */
+    font-variant-numeric: tabular-nums;
+
+    background-color: var(--canvas);
+    color: var(--ink);
+    line-height: 1.5; /* 中文正文行高下限，任何情况下不要再压 */
+
+    -webkit-font-smoothing: antialiased; /* 深色底上必需：默认渲染在纯黑上偏粗 */
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 焦点可见性：键盘用户必须能看见焦点在哪。
+   * 用 :focus-visible 而不是 :focus，鼠标点击不会留下难看的描边。 */
+  :focus-visible {
+    outline: 2px solid var(--accent-blue-text);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in srgb, var(--brand) 28%, transparent);
+  }
+}
+
+/* ============================================================================
+ * 七、iOS Safari 专属修复（不做这几条，手机上就是残废）
+ * ========================================================================== */
+@layer base {
+  /* ① `100vh` → `100dvh`
+   * iOS Safari 的地址栏会随滚动伸缩。用 100vh 时它按「地址栏收起」的最大
+   * 高度算，地址栏一展开，底部内容就被盖住。dvh 是「当前动态视口高度」，
+   * 会跟着地址栏实时变化。下面同时保留 vh 作为旧浏览器兜底（顺序不能反，
+   * 后写的声明生效）。 */
+  .screen-min {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  /* ② env(safe-area-inset-*)
+   * 全面屏底部的「小黑条」和顶部刘海会盖住内容。只在 viewport-fit=cover
+   * （layout.tsx 里设了）时 env() 才非 0，否则整条是 0，白给。
+   * 这里的 max() 是为了：即使安全区是 0，也至少留出设计稿的 16px 边距。 */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .px-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  .p-safe {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+
+  .pb-safe-nav {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 16px);
+  }
+
+  /* ③ 输入框字号必须 ≥ 16px
+   * iOS Safari 在 focus 到 font-size < 16px 的输入框时，会自动把**整个页面**
+   * 放大，而且用户手动缩回去也没用。这是纯 CSS 无法在事后补救的行为，
+   * 唯一的解法就是一开始就别小于 16px。这一条不能靠工具类自觉遵守。 */
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+    font-family: inherit;
+  }
+
+  /* ④ 触碰手感
+   * touch-action: manipulation 去掉 iOS 为「双击缩放」预留的 300ms 点击延迟；
+   * tap-highlight-color 去掉点击瞬间的灰色方块（那是 Android/iOS 的默认高亮，
+   * 和我们的按压反馈冲突）。 */
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  [role='button'] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ⑤ 图片与媒体不要溢出容器 */
+  img,
+  video,
+  canvas {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* ============================================================================
+ * 八、工具类
+ * ========================================================================== */
+@layer components {
+  /* ---- 触控目标 ----
+   * HIG 硬要求 44×44px。手指的接触面积就是这么大，做小了误触率会明显上升。
+   * 小图标按钮（关闭、加减号）用这个类撑开热区，视觉尺寸可以更小。 */
+  .touch-target {
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ---- 内容宽度 ----
+   * 980px：苹果官网正文列宽，适合「图文混排的信息流」
+   * 720px：一行 45–75 汉字的舒适阅读宽度，适合纯段落 */
+  /* ⚠️ 这里的 padding 只在调用方【没有】传 p-space-* 时才有意义。
+   * @layer components 的优先级低于 @layer utilities，所以
+   * `class="content-max p-space-4"` 里 p-space-4 一定赢 —— 这是想要的：
+   * 页面自己决定边距，content-max 只负责居中与限宽。
+   * 早先这三行写的是 var(--space-4)，而变量早已改名成
+   * var(--spacing-space-4)（见上面 @theme 的注释），于是它们是无效声明。
+   * 之所以一直没被发现，正是因为每个调用方都同时传了 p-space-*，
+   * 把坏掉的那层盖住了 —— 又一处静默失败。 */
+  .content-max {
+    width: 100%;
+    max-width: var(--content-max);
+    margin-inline: auto;
+    padding-inline: var(--spacing-space-4);
+  }
+
+  @media (min-width: 768px) {
+    .content-max {
+      padding-inline: var(--spacing-space-8);
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .content-max {
+      padding-inline: var(--spacing-space-12);
+    }
+  }
+
+  /* ---- 图表柱子 ----
+   * 柱子是 preserveAspectRatio="none" 下的 <line>，stroke-width 因此不能用
+   * viewBox 单位（会被横向拉伸），只能给设备像素值 —— 而设备像素值没法在
+   * 服务端按卡片宽度算。用 clamp + vw 近似即可：
+   * 视口 390px 时约 7.8px（30 天柱距约 10.8px，占 72%，正是苹果的疏密感）；
+   * 视口 1440px 时封顶 12px，柱子不会变成一根根粗棒子。 */
+  .ct-bar {
+    stroke-width: clamp(4px, 2vw, 12px);
+  }
+
+  .prose-measure {
+    max-width: var(--text-measure);
+  }
+
+  /* ---- 发丝线 ----
+   * Retina 屏上 1px 的边框其实有 2–3 个物理像素，看起来比设计稿重。
+   * 苹果的做法是「亮度差 + 1px 亮边」，所以这里给一个明确的 1px 边框类，
+   * 别再用 2px、也别用阴影去模拟。
+   * 注：不做 0.5px 的 hack，那会在非 Retina 屏上直接消失。 */
+  .hairline {
+    border: 1px solid var(--hairline);
+  }
+
+  /* ---- 数字等宽 ----
+   * 体重（72.4 → 72.8）、热量（1,842 → 1,905）这类数字在动画/实时刷新时，
+   * 比例数字会让每个数字宽度不同，整行左右抖动。
+   * 全局已经在 body 上开了 tabular-nums，这个类是给需要「局部显式声明」
+   * 或者被别的 font-variant 覆盖过的场景用的。 */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  /* 反过来：大号数字展示（比如首屏的「−8.2 kg」）可以关掉等宽，
+   * 让字形回归自然比例，视觉上更舒展。 */
+  .proportional-nums {
+    font-variant-numeric: proportional-nums;
+  }
+
+  /* ---- 玻璃（Liquid Glass 的网页近似） ----
+   * 官网能还原约 90%，靠的是下面四层叠加，缺任何一层都会「不像苹果」：
+   *   ① backdrop-filter: blur + saturate —— saturate 是「苹果味」的关键，
+   *      单纯模糊只会像毛玻璃，提饱和才像真玻璃
+   *   ② 1px 亮边 —— 玻璃的厚度感
+   *   ③ inset 0 1px 0 顶部内高光 —— 模拟光源在正上方（specular）
+   *   ④ 135° 斜向光泽 —— 苹果玻璃的「斜切光泽」，由 ::before 绘制
+   *
+   * 性能红线：
+   *   · 同一屏玻璃元素 ≤ 3 个。backdrop-filter 每次滚动都要重算背景采样，
+   *     堆多了在 iPhone 上直接掉帧到 30fps 以下。
+   *   · **不要加 will-change: backdrop-filter** —— 它会强制浏览器持续
+   *     合成这一层，本来只在滚动时才算的开销会变成每帧都算。
+   *   · 不要给它加 transition: all，也不要在滚动中让它变形。 */
+  .glass {
+    position: relative;
+    background-color: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(180%);
+    backdrop-filter: blur(var(--blur-glass)) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow:
+      inset 0 1px 0 var(--glass-inner-hi),
+      var(--glass-outer);
+    overflow: hidden; /* 让 ::before 的光泽被圆角裁掉，不然会溢出成方形 */
+  }
+
+  .glass::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+      135deg,
+      var(--glass-sheen-strong) 0%,
+      var(--glass-sheen-soft) 28%,
+      transparent 55%
+    );
+    pointer-events: none; /* 光泽层不能吃掉点击 */
+    z-index: 1;
+  }
+
+  /* ---- 玻璃降级 ----
+   * 不支持 backdrop-filter 时（老 Firefox、部分安卓 WebView），
+   * 半透明背景会变成「能看见底下内容但毫无模糊」的糊状物，比不用玻璃更糟。
+   * 降级方案：直接用不透明背景 + 保留亮边，退化成一张普通卡片。 */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass {
+      background-color: var(--card);
+      box-shadow: inset 0 1px 0 var(--glass-inner-hi);
+    }
+
+    .glass::before {
+      display: none;
+    }
+  }
+
+  /* ---- Keynote 光晕 ----
+   * 首屏「发布会感」的一半来自背景光晕，另一半来自留白。
+   * 约束：opacity ≤ 0.30（再亮就抢主体），pointer-events: none（不能拦点击）。 */
+  .glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.3;
+    background: radial-gradient(
+      ellipse 50% 40% at 50% 30%,
+      color-mix(in srgb, var(--system-blue) 28%, transparent) 0%,
+      color-mix(in srgb, var(--system-indigo) 14%, transparent) 35%,
+      transparent 70%
+    );
+    filter: blur(80px);
+  }
+}
+
+/* ============================================================================
+ * 九、无障碍：尊重「减少动态效果」
+ * ----------------------------------------------------------------------------
+ * 前庭功能障碍用户开启这个系统开关后，位移/缩放类动画会引起眩晕甚至恶心。
+ * 这里是全局硬关闭：所有 transition 压到 0.01ms（不是 0——0 会让某些
+ * 依赖 transitionend 事件的组件永远收不到回调），动画只跑一次且立即结束。
+ * 注意：这里关的是「运动」，不是「反馈」——颜色/透明度的变化仍应该保留。
+ * ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto; /* 平滑滚动本身就是一种大幅位移 */
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
