@@ -55,18 +55,30 @@ rm .env.development.local   # 让 dev 也走 .env.local
 npm run verify
 ```
 
-一条命令跑完四层检查：
+一条命令跑完五层检查：
 
 ```
-typecheck  →  tsc --noEmit
-lint       →  eslint
-test       →  175 项营养计算单测
-db:verify  →  67 项数据库断言（在内存 Postgres 上跑真实迁移文件）
+typecheck       →  tsc --noEmit
+lint            →  eslint
+test            →  52 项营养计算 / 时区单测
+actions:verify  →  'use server' 文件里没有非法导出（非 async 导出会让页面 500）
+db:verify       →  74 项数据库断言（在内存 Postgres 上跑真实迁移文件）
 ```
 
 `db:verify` 值得单独说：它**不是**验证「我以为的 schema」，而是把 `drizzle/*.sql`
-这七个真实迁移文件按序跑在 PGlite 上，然后以真正的 `authenticated` 角色 + 伪造 JWT
+这八个真实迁移文件按序跑在 PGlite 上，然后以真正的 `authenticated` 角色 + 伪造 JWT
 去撞 RLS。所以它能抓到「策略写错」和「GRANT 漏配」这两类只在真库上才会暴露的问题。
+
+**还有一层只能在真库上跑的验证**（不进 `verify`，因为它会真的连线上项目并增删一次性测试账号）：
+
+```bash
+npm run db:verify:hosted   # 17 项，需要完整 .env.local（含 service_role key）
+```
+
+它验的是 PGlite 造不出来的四件事：`SET LOCAL ROLE authenticated` 在真实连接上成不成立、
+`auth.users` 触发器有没有权限建档、**两种连接池（会话 5432 / 事务 6543）下 `SET LOCAL` 是否都成立**、
+以及 RLS 的端到端双账号隔离（DoD 硬指标）。写它时踩的两个「把假阳性当通过」的坑
+记在 [docs/04-数据模型.md §11.4](docs/04-数据模型.md)。
 
 ## 看页面
 
