@@ -3,7 +3,10 @@
 import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
 
-import { sendMagicLink, LOGIN_INITIAL } from './actions';
+import { sendMagicLink } from './actions';
+/* 初值从 ./state 拿，不能从 ./actions 拿：
+ * actions.ts 是 'use server' 文件，只能导出 async 函数。 */
+import { LOGIN_INITIAL } from './state';
 
 /* 登录表单。
  *

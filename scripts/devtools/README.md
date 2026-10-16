@@ -51,3 +51,28 @@ node scripts/devtools/cdp.mjs eval 390 "getComputedStyle(document.querySelector(
 | `timeout: command not found`（exit 127） | macOS 没有 GNU `timeout` |
 | Chrome 命令一直挂着不返回 | 无头 Chrome 完成后不退出，需手动 kill |
 | 刚放进 `public/` 的文件 404 | `next start` 的 public 文件清单是**构建时**确定的，加文件要重新 build |
+| `eval` / `diag` 报 `chrome-error://chromewebdata/` | `PORT` 环境变量没传，默认连的是 3100 |
+
+## `console.mjs` —— 抓 console / 异常 / 失败请求
+
+```bash
+PORT=3000 node scripts/devtools/console.mjs '/login#access_token=bogus' 2500
+```
+
+`eval` 只能看到**最终**状态，而 hydration mismatch、key 警告、被吞掉的
+客户端异常都只出现在 console 里，页面上完全看不出来。这个工具补的就是这一块。
+
+判据：**只有真的有 error / warning / 异常 / 失败请求时才 exit 1**，
+否则打印「console 干净 ✅」。可以直接串进验证流程。
+
+滤掉了 Next dev 的常规噪音（HMR 连接、Fast Refresh、React DevTools 提示）。
+
+### 两个已踩的坑
+
+1. **忘了 `Page.navigate`** —— 第一次写完直接跑，两行「console 干净」其实量的是
+   `about:blank`（`href` 返回 `"blank"`、`title` 为空才露馅）。
+   所以输出里同时打「地址」和「最终」，别只看「干净」两个字。
+2. `document.querySelector('[data-nextjs-toast]')` 会命中 `<style>` 标签，
+   拿到一大段 CSS 文本 —— 想读 dev 浮层得进 `nextjs-portal` 的 `shadowRoot`，
+   不如直接听 `Runtime.consoleAPICalled`。
+

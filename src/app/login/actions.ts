@@ -6,6 +6,11 @@ import { revalidatePath } from 'next/cache';
 
 import { createSupabaseServerClient, isSupabaseConfigured } from '@/lib/supabase';
 
+/* LoginState 与 LOGIN_INITIAL 都在 ./state.ts。
+ * 不能写在这个文件里 —— 'use server' 文件只允许导出 async 函数，
+ * 导出对象会让表单提交时 500。详见 state.ts 顶部的说明。 */
+import type { LoginState } from './state';
+
 /* 登录 / 登出。
  *
  * 这里刻意**不用密码**，走「魔法链接」（magic link / email OTP）：
@@ -25,13 +30,6 @@ import { createSupabaseServerClient, isSupabaseConfigured } from '@/lib/supabase
  * 和 log/meal/actions.ts 里 UUID 的取舍一致：zod 3 和 4 的写法不同，
  * 正则不受版本影响，升级时不会静默失效。 */
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export type LoginState = {
-  status: 'idle' | 'sent' | 'error';
-  message: string;
-};
-
-export const LOGIN_INITIAL: LoginState = { status: 'idle', message: '' };
 
 /** 把请求的 origin 拼出来，用于生成回跳地址。
  *

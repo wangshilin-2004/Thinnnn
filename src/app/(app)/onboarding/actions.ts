@@ -9,6 +9,10 @@ import { measurements, profiles } from '@/db/schema';
 import { requireUser } from '@/lib/auth';
 import { buildPlan, todayInTimezone, type ActivityLevel, type GoalType, type Sex } from '@/lib/nutrition';
 
+/* OnboardingState 与 ONBOARDING_INITIAL 都在 ./state.ts —— 'use server'
+ * 文件只允许导出 async 函数，常量留在本文件会让提交表单时 500。 */
+import type { OnboardingState } from './state';
+
 /* 引导流程：把「算出你的目标」这件事做一次，然后存下来。
  *
  * 为什么不每次渲染现算：
@@ -18,9 +22,6 @@ import { buildPlan, todayInTimezone, type ActivityLevel, type GoalType, type Sex
  *  3. 省掉每次渲染的重算
  * 详见 src/db/schema.ts 里 profiles 那段注释。
  */
-
-export type OnboardingState = { status: 'idle' | 'error'; message: string };
-export const ONBOARDING_INITIAL: OnboardingState = { status: 'idle', message: '' };
 
 const SEXES: readonly Sex[] = ['male', 'female'];
 const LEVELS: readonly ActivityLevel[] = ['sedentary', 'light', 'moderate', 'active', 'very_active'];
