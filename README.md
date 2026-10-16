@@ -69,16 +69,27 @@ db:verify       →  74 项数据库断言（在内存 Postgres 上跑真实迁�
 这八个真实迁移文件按序跑在 PGlite 上，然后以真正的 `authenticated` 角色 + 伪造 JWT
 去撞 RLS。所以它能抓到「策略写错」和「GRANT 漏配」这两类只在真库上才会暴露的问题。
 
-**还有一层只能在真库上跑的验证**（不进 `verify`，因为它会真的连线上项目并增删一次性测试账号）：
+**还有两层刻意不进的验证**（都需要额外前提，混进日常检查就会变成噪音）：
 
 ```bash
 npm run db:verify:hosted   # 17 项，需要完整 .env.local（含 service_role key）
+npm run auth:verify        # 10 项，需要先构建
 ```
 
-它验的是 PGlite 造不出来的四件事：`SET LOCAL ROLE authenticated` 在真实连接上成不成立、
-`auth.users` 触发器有没有权限建档、**两种连接池（会话 5432 / 事务 6543）下 `SET LOCAL` 是否都成立**、
-以及 RLS 的端到端双账号隔离（DoD 硬指标）。写它时踩的两个「把假阳性当通过」的坑
-记在 [docs/04-数据模型.md §11.4](docs/04-数据模型.md)。
+`db:verify:hosted` 验的是 PGlite 造不出来的四件事：`SET LOCAL ROLE authenticated`
+在真实连接上成不成立、`auth.users` 触发器有没有权限建档、**两种连接池（会话 5432 /
+事务 6543）下 `SET LOCAL` 是否都成立**、以及 RLS 的端到端双账号隔离（DoD 硬指标）。
+写它时踩的两个「把假阳性当通过」的坑记在 [docs/04-数据模型.md §11.4](docs/04-数据模型.md)。
+
+`auth:verify` 补的是**另一个方向**的缺口：上面那些全是数据库层断言，
+证明「数据库不会把别人的行给我」，但证明不了「未登录的请求打不开这个页面」。
+它会真的起一个生产服务、发**不带 cookie** 的请求，断言 5 个受保护路径返回 307。
+少了这一层，某个 `page.tsx` 漏写 `requireUser()` 就是静默的公开页面。
+
+```bash
+NEXT_DIST_DIR=.next-build npx next build   # 先构建（改了代码要重来）
+npm run auth:verify                        # 再验
+```
 
 ## 看页面
 
@@ -99,6 +110,7 @@ node scripts/devtools/cdp.mjs diag 390 /dashboard
 | [docs/03-设计系统.md](docs/03-设计系统.md) | 配色、字阶、圆角、玻璃配方、中英混排约束 |
 | [docs/04-数据模型.md](docs/04-数据模型.md) | 表结构、RLS、触发器、以及那两道独立的门（GRANT vs POLICY） |
 | [docs/05-部署.md](docs/05-部署.md) | 从零到上线的完整步骤 |
+| [docs/06-代码地图.md](docs/06-代码地图.md) | **想改代码先看这份**：先读哪五个文件、一次请求怎么流过去、三条铁律与它们的守卫 |
 | [research/](research/) | 前期调研：13 个同类项目对比、Apple 视觉语言、技术栈与部署、营养计算依据 |
 
 ## 许可

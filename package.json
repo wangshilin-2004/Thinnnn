@@ -16,6 +16,7 @@
     "db:studio": "drizzle-kit studio",
     "db:verify": "node tests/verify-migrations.mjs",
     "db:verify:hosted": "node tests/verify-hosted.mjs",
+    "auth:verify": "node tests/verify-auth-boundary.mjs",
     "dev": "next dev",
     "lint": "eslint",
     "seed:build": "node scripts/build-seed.mjs",
