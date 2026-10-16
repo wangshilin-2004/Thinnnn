@@ -45,6 +45,37 @@ type Patch =
 
 const MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 
+/* 分类的展示顺序。
+ *
+ * 原来这里没有顺序 —— 按 catalog 的到达次序分组，于是第一屏是
+ * 「坚果 / 奶类 / 快餐外卖」，纯粹是数据库返回的偶然次序。没人会从
+ * 坚果开始记一顿饭。
+ *
+ * 改成按「一顿饭里出现的概率」排：主食打头（中国饮食的底盘），
+ * 然后是菜和外卖；再是蛋白质来源，减脂期最该盯的一组；接着是
+ * 可以放心大口吃的蔬果；最后是「用量小但热量密度极高」的一类 ——
+ * 一勺油 90 kcal、一勺芝麻酱 126 kcal，放前面会误导人以为可以随便点。
+ */
+const CATEGORY_ORDER = [
+  '谷薯',
+  '菜肴',
+  '快餐外卖',
+  '畜肉',
+  '禽肉',
+  '水产',
+  '蛋类',
+  '豆类',
+  '奶类',
+  '蔬菜',
+  '菌藻',
+  '水果',
+  '坚果',
+  '油脂',
+  '调味品',
+  '糕点零食',
+  '饮料',
+] as const;
+
 /* 搜索打分。
  *
  * 为什么不用简单的 includes：中文食物名大量共享后缀（「白米饭 / 糙米饭 /
@@ -88,6 +119,10 @@ export function MealLogger({
 }) {
   const [mealType, setMealType] = useState<MealType>(defaultMealType);
   const [query, setQuery] = useState('');
+  /* null = 还没手动选过，用 CATEGORY_ORDER 里的第一个。
+   * 不写成 useState(categories[0]) 是因为 categories 要等 catalog 分组完
+   * 才知道 —— 用 useMemo 算完再兜底，省掉一个「挂载后 setState」的 effect。 */
+  const [pickedCategory, setPickedCategory] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -115,16 +150,25 @@ export function MealLogger({
 
   /* 按分类分组，用于「没搜索时」的浏览视图。
    * 用 reduce 而不是 SQL 的 group by：数据已经在客户端了，
-   * 一次遍历就够，没必要为它多查一次库。 */
-  const byCategory = useMemo(() => {
+   * 一次遍历就够，没必要为它多查一次库。
+   *
+   * 分组完再按 CATEGORY_ORDER 重排。库里将来新增了没登记的分类时
+   * 接在最后，而不是被 filter 悄悄吃掉 —— 吃掉的后果是那些食物
+   * 只能靠搜索找到，用户根本不知道它们存在。 */
+  const categories = useMemo(() => {
     const map = new Map<string, PickerFood[]>();
     for (const f of catalog) {
       const list = map.get(f.category);
       if (list) list.push(f);
       else map.set(f.category, [f]);
     }
-    return [...map.entries()];
+    const known = CATEGORY_ORDER.filter((c) => map.has(c));
+    const rest = [...map.keys()].filter((c) => !(CATEGORY_ORDER as readonly string[]).includes(c));
+    return [...known, ...rest].map((c) => [c, map.get(c)!] as const);
   }, [catalog]);
+
+  const shownCategory = pickedCategory ?? categories[0]?.[0] ?? null;
+  const shownFoods = categories.find(([c]) => c === shownCategory)?.[1] ?? [];
 
   const eatenToday = optimistic.reduce((sum, m) => sum + m.kcal, 0);
   const remaining = targetKcal === null ? null : targetKcal - eatenToday;
@@ -298,21 +342,55 @@ export function MealLogger({
           )}
 
           {/* ── 按分类浏览 ─────────────────────────────────────── */}
-          {byCategory.map(([category, list]) => (
-            <section key={category}>
-              <h2 className="mb-2 text-footnote text-ink-3">{category}</h2>
-              <ul className="divide-y divide-separator overflow-hidden rounded-md bg-card">
-                {list.map((food) => (
-                  <FoodRow
-                    key={food.id}
-                    food={food}
-                    disabled={isPending}
-                    onAdd={() => handleAdd(food)}
-                  />
-                ))}
-              </ul>
-            </section>
-          ))}
+          <section>
+            <h2 className="mb-2 text-footnote text-ink-3">按分类找</h2>
+
+            {/* 横向滚动的分类芯片。
+             *
+             * 为什么不是原来那样把所有分类依次堆在页面上：食物库有 212 行，
+             * 在手机上量出来是 10 屏以上 —— 想记一碗米饭要翻半天，而
+             * 「录入摩擦」正是这个产品调研里最主要的流失原因。
+             * 现在页面高度只跟当前这一类有关（最多 28 行）。
+             *
+             * 芯片本身也是分类的全貌：一眼看得见库里有什么，不用滚到底。 */}
+            <ul className="-mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1">
+              {categories.map(([category, list]) => {
+                const active = category === shownCategory;
+                return (
+                  <li key={category} className="shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setPickedCategory(category)}
+                      aria-pressed={active}
+                      className={`touch-target rounded-full border px-4 py-2 text-subhead transition-colors ${
+                        active
+                          ? 'border-brand bg-brand font-semibold text-on-accent'
+                          : 'border-hairline bg-card text-ink-2 hover:border-separator-opaque hover:text-ink'
+                      }`}
+                    >
+                      {category}
+                      <span
+                        className={`ml-1.5 text-caption-1 ${active ? 'text-on-accent' : 'text-ink-3'}`}
+                      >
+                        {list.length}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <ul className="divide-y divide-separator overflow-hidden rounded-md bg-card">
+              {shownFoods.map((food) => (
+                <FoodRow
+                  key={food.id}
+                  food={food}
+                  disabled={isPending}
+                  onAdd={() => handleAdd(food)}
+                />
+              ))}
+            </ul>
+          </section>
         </>
       )}
 
