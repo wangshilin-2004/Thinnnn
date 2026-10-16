@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 
 import { createSupabaseServerClient, isSupabaseConfigured } from '@/lib/supabase';
+import { isDevUserActive } from '@/lib/auth';
 
 /* LoginState 与 LOGIN_INITIAL 都在 ./state.ts。
  * 不能写在这个文件里 —— 'use server' 文件只允许导出 async 函数，
@@ -57,12 +58,28 @@ export async function sendMagicLink(_prev: LoginState, formData: FormData): Prom
   }
 
   if (!isSupabaseConfigured()) {
-    /* 本地离线开发时 Supabase 没配。这时 devUser() 会自动接管，
-     * 根本不需要登录 —— 如实说明，别假装发送成功了。 */
-    return {
-      status: 'error',
-      message: '本地开发模式不需要登录（已自动使用开发用户）。直接打开 /dashboard 即可。',
-    };
+    /* 没配 Supabase 有两个完全不同的原因，给的话也必须完全不同：
+     *
+     *   本地开发 → devUser() 接管，不用登录，如实说
+     *   线上漏配 → devUser() 被 NODE_ENV 那道锁挡掉，**发不出链接也登不进去**，
+     *              这时必须说出「去补环境变量」，否则用户会照着
+     *              「直接打开 /dashboard」的提示去点，被弹回登录页，
+     *              然后陷入「点了没反应」的死循环，永远查不到真正原因。
+     *
+     * 别用 NODE_ENV 直接判断 —— isDevUserActive() 才是单一真相来源，
+     * 它和 devUser() 的三道锁一一对应。 */
+    return isDevUserActive()
+      ? {
+          status: 'error',
+          message: '本地开发模式不需要登录（已自动使用开发用户）。直接打开 /dashboard 即可。',
+        }
+      : {
+          status: 'error',
+          message:
+            '服务端没配好登录功能：缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_ANON_KEY，' +
+            '所以谁也登不进去。如果是你自己部署的，去 Vercel 的项目设置里补上这两个变量，然后重新部署一次' +
+            '（改环境变量不会自动生效）。',
+        };
   }
 
   const supabase = await createSupabaseServerClient();

@@ -19,6 +19,25 @@ export type SessionUser = {
   timezone: string;
 };
 
+/** 开发用户此刻是否真的会生效。
+ *
+ * 这是「开发用户」这件事的**单一真相来源**：devUser() 用它决定要不要返回用户，
+ * 登录页用它决定该说什么话。
+ *
+ * 为什么要抽出来：这两处一旦各写一份判断，就会漂移成最让人困惑的状态 ——
+ * 提示说「本地开发模式不用登录，直接打开 /dashboard」，但打开就被弹回登录页。
+ * 本项目真在生产的构建上撞到过：缺少 NEXT_PUBLIC_SUPABASE_* 时，
+ * isSupabaseConfigured() 为 false 走进「开发模式」分支，
+ * 可 Vercel 的 NODE_ENV 是 production，第一道锁直接把它挡掉了 ——
+ * 于是文案撒谎，而真正的原因（该去配环境变量）一个字都没提。
+ *
+ * 三道锁与 devUser() 完全一致。详见 devUser() 上方的说明。 */
+export function isDevUserActive(): boolean {
+  if (process.env.NODE_ENV === 'production') return false;
+  if (!process.env.DEV_USER_ID) return false;
+  return /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL ?? '');
+}
+
 /** 本地离线开发用的固定用户。
  *
  * 为什么需要一个：Supabase Auth（GoTrue）是 Supabase 托管服务的一部分，
@@ -31,18 +50,21 @@ export type SessionUser = {
  *   3. 数据库必须指向本机（连远端库时直接拒绝）
  * 三条都满足才返回用户。任何一条不满足都退回到真正的 Supabase 鉴权。 */
 async function devUser(): Promise<SessionUser | null> {
-  if (process.env.NODE_ENV === 'production') return null;
-
-  const id = process.env.DEV_USER_ID;
-  if (!id) return null;
-
   const dbUrl = process.env.DATABASE_URL ?? '';
-  if (!/localhost|127\.0\.0\.1/.test(dbUrl)) {
+
+  /* 配置自相矛盾（设了开发用户，却连的是远端库）要**大声报错**，
+   * 不能静默降级成"没有开发用户" ——
+   * 那会让人以为自己一直在本地库上开发，实际每次请求都在打真库。 */
+  if (process.env.NODE_ENV !== 'production' && process.env.DEV_USER_ID && !/localhost|127\.0\.0\.1/.test(dbUrl)) {
     throw new Error(
       'DEV_USER_ID 已设置，但 DATABASE_URL 不是本机地址 —— 拒绝启用开发用户。' +
         '开发用户只能在本地库上使用。',
     );
   }
+
+  if (!isDevUserActive()) return null;
+
+  const id = process.env.DEV_USER_ID!;
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('DEV_USER_ID 必须是 UUID');
 
   /* auth.users 里没有这行的话，measurements / meal_items 的外键会指向空气。
