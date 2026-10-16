@@ -112,7 +112,7 @@ async function evaluate(cdp, expression) {
   return r.result.value;
 }
 
-const OVERFLOW_EXPR = `(() => {
+const OVERFLOW_EXPR = `(async () => {
   const vw = innerWidth, de = document.documentElement;
   const L = [];
   L.push('视口 innerWidth = ' + vw + 'px   dpr=' + devicePixelRatio
@@ -147,13 +147,43 @@ const OVERFLOW_EXPR = `(() => {
     }
   }
   L.push('--- 触控目标（应 ≥44px）---');
-  let small = 0;
+  /* 用 elementFromPoint 实测，不看元素的 CSS 盒子。
+   * 原因：有些按钮（列表里那个只有 17px 高的「改」）靠 after 伪元素把触控区
+   * 扩到 44px，而伪元素不在 getBoundingClientRect 里 —— 只看盒子会把它报成
+   * 问题。反过来，CSS 里写着 44px 也可能有东西盖在上面，同样测不出来。
+   * 探针取元素中心上下各 21px（即 44px 盒子的边界内一点）。 */
+  const smallEls = [];
   for (const el of document.querySelectorAll('a, button, [role=button]')) {
     const r = el.getBoundingClientRect();
-    if (r.width === 0) continue;
-    if (r.height < 44) { small++; L.push('  偏小 h=' + r.height.toFixed(0) + ' 「' + (el.textContent||'').trim().slice(0,20) + '」'); }
+    if (r.width === 0 || r.height === 0) continue;
+    if (r.height >= 44 && r.width >= 44) continue;
+    smallEls.push(el);
   }
-  if (!small) L.push('  全部 ≥44px ✅');
+  if (!smallEls.length) {
+    L.push('  全部 ≥44px ✅');
+  } else {
+    const savedY = scrollY;
+    const bad = [];
+    for (const el of smallEls) {
+      /* behavior:'instant' 是必须的：globals.css 里有 scroll-behavior:smooth，
+       * 默认的 scrollIntoView 会动画滚过去，立刻测量拿到的是中途位置。 */
+      el.scrollIntoView({ block: 'center', behavior: 'instant' });
+      await new Promise((r) => setTimeout(r, 350));
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const hit = (y) => {
+        const e = document.elementFromPoint(cx, y);
+        return !!e && (el.contains(e) || e.contains(el));
+      };
+      if (!(hit(cy - 21) && hit(cy + 21))) {
+        bad.push('  ❌ 够不着 ' + r.width.toFixed(0) + 'x' + r.height.toFixed(0)
+          + ' 上下探针未命中 「' + (el.textContent || '').trim().slice(0, 20) + '」');
+      }
+    }
+    scrollTo(0, savedY);
+    if (bad.length) L.push(...bad);
+    else L.push('  ✅ ' + smallEls.length + ' 个元素视觉上小于 44px，但触控区实测达标');
+  }
   return L.join('\\n');
 })()`;
 
