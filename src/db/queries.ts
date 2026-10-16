@@ -123,8 +123,27 @@ export type MealType = keyof typeof MEAL_LABELS;
 export async function getMealsForDate(userId: string, date: string) {
   return withUser(userId, async (tx) => {
     const rows = await tx
-      .select()
+      .select({
+        id: mealItems.id,
+        mealType: mealItems.mealType,
+        foodName: mealItems.foodName,
+        quantityG: mealItems.quantityG,
+        servingLabel: mealItems.servingLabel,
+        /* 这里是「原始一份」多少克，**不是**当前这条的份量。
+         * 界面上的份数 = quantityG / servingGrams，见 src/lib/portion.ts。
+         * 区分这两者很重要：servingLabel 里的数字是「一份叫什么」，
+         * 用户改过克数之后它就不再等于当前份数了。 */
+        servingGrams: foodServings.grams,
+        kcal: mealItems.kcal,
+        proteinG: mealItems.proteinG,
+        fatG: mealItems.fatG,
+        carbG: mealItems.carbG,
+      })
       .from(mealItems)
+      /* 必须 LEFT JOIN：serving_id 是 ON DELETE SET NULL，份量被删掉之后
+       * 这一列变成 NULL，用 INNER JOIN 会把整条记录从饮食日志里抹掉 ——
+       * 用户改一次食物库，历史就凭空少几行。 */
+      .leftJoin(foodServings, eq(mealItems.servingId, foodServings.id))
       .where(and(eq(mealItems.userId, userId), eq(mealItems.logDate, date)))
       .orderBy(asc(mealItems.loggedAt));
 
@@ -134,6 +153,7 @@ export async function getMealsForDate(userId: string, date: string) {
       foodName: r.foodName,
       quantityG: num(r.quantityG),
       servingLabel: r.servingLabel,
+      servingGrams: r.servingGrams === null ? null : num(r.servingGrams),
       kcal: num(r.kcal),
       proteinG: num(r.proteinG),
       fatG: num(r.fatG),

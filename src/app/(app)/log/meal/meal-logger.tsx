@@ -4,8 +4,9 @@ import { useMemo, useOptimistic, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 
 import type { MealType, PickerFood } from '@/db/queries';
+import { portionStep, portionText } from '@/lib/portion';
 
-import { addMealItem, deleteMealItem } from './actions';
+import { addMealItem, deleteMealItem, updateMealQuantity } from './actions';
 
 /* 记一餐的交互层。
  *
@@ -25,6 +26,9 @@ type MealItem = {
   foodName: string;
   quantityG: number;
   servingLabel: string | null;
+  /* 原始一份多少克，来自 food_servings（LEFT JOIN，可能为空）。
+   * 界面上的份数 = quantityG / servingGrams，见 src/lib/portion.ts。 */
+  servingGrams: number | null;
   kcal: number;
   proteinG: number;
   fatG: number;
@@ -41,7 +45,8 @@ type RecentFood = {
 
 type Patch =
   | { kind: 'add'; item: MealItem }
-  | { kind: 'remove'; id: string };
+  | { kind: 'remove'; id: string }
+  | { kind: 'resize'; id: string; quantityG: number };
 
 const MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -125,15 +130,35 @@ export function MealLogger({
   const [pickedCategory, setPickedCategory] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  /* 正在改份量的那一条：存 id + 草稿克数。
+   * 草稿放在这里而不是子组件里 —— 列表在乐观更新时整体重渲染，
+   * 子组件自己的 state 会被丢掉，用户正在输入的内容会凭空消失。 */
+  const [editing, setEditing] = useState<{ id: string; grams: number } | null>(null);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [optimistic, applyPatch] = useOptimistic(
     todaysMeals,
-    (state: MealItem[], patch: Patch) =>
-      patch.kind === 'add'
-        ? [...state, patch.item]
-        : state.filter((m) => m.id !== patch.id),
+    (state: MealItem[], patch: Patch) => {
+      if (patch.kind === 'add') return [...state, patch.item];
+      if (patch.kind === 'remove') return state.filter((m) => m.id !== patch.id);
+
+      /* 改份量：按比例缩放这一条的全部营养值，让数字立刻跟上手指。
+       * 服务端会用食物当前的「每 100 g 密度」重算，可能与此处差一点点 ——
+       * 没关系：过渡结束后 useOptimistic 会被服务端的真实值覆盖。 */
+      return state.map((m) => {
+        if (m.id !== patch.id || m.quantityG <= 0) return m;
+        const factor = patch.quantityG / m.quantityG;
+        return {
+          ...m,
+          quantityG: patch.quantityG,
+          kcal: m.kcal * factor,
+          proteinG: m.proteinG * factor,
+          fatG: m.fatG * factor,
+          carbG: m.carbG * factor,
+        };
+      });
+    },
   );
 
   const q = query.trim();
@@ -188,6 +213,7 @@ export function MealLogger({
           foodName: food.name,
           quantityG: food.serving?.grams ?? 100,
           servingLabel: food.serving?.label ?? null,
+          servingGrams: food.serving?.grams ?? null,
           kcal: Math.round(((food.kcalPer100 * (food.serving?.grams ?? 100)) / 100) * 10) / 10,
           proteinG: 0,
           fatG: 0,
@@ -211,6 +237,18 @@ export function MealLogger({
       applyPatch({ kind: 'remove', id });
       const res = await deleteMealItem({ id });
       if (!res.ok) setError(res.error ?? '删除失败');
+    });
+  }
+
+  /* 改份量。不传任何算好的数字 —— 服务端按食物的「每 100 g 密度」重算
+   * 克数、热量和三大营养素，客户端只负责把意图说清楚。 */
+  function handleResize(id: string, quantityG: number) {
+    setError(null);
+    setEditing(null);
+    startTransition(async () => {
+      applyPatch({ kind: 'resize', id, quantityG });
+      const res = await updateMealQuantity({ id, quantityG });
+      if (!res.ok) setError(res.error ?? '改份量失败，再试一次。');
     });
   }
 
@@ -420,28 +458,118 @@ export function MealLogger({
                   </span>
                 </div>
                 <ul className="divide-y divide-separator overflow-hidden rounded-md bg-card">
-                  {items.map((m) => (
-                    <li key={m.id} className="flex items-center gap-3 px-4 py-3">
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-subhead text-ink">{m.foodName}</span>
-                        <span className="block text-caption-1 text-ink-3">
-                          {m.servingLabel ?? `${Math.round(m.quantityG)} g`}
+                  {items.map((m) => {
+                    /* 加一下/减一下走半份（「多半碗」「少半碗」），没有份量
+                     * 概念的手输条走 50 g。见 src/lib/portion.ts。 */
+                    const step = portionStep(m.servingGrams);
+
+                    if (editing?.id === m.id) {
+                      return (
+                        <li key={m.id} className="px-4 py-3">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-3">
+                              <span className="min-w-0 flex-1 truncate text-subhead text-ink">
+                                {m.foodName}
+                              </span>
+                              <span className="tabular shrink-0 text-subhead text-ink">
+                                {m.quantityG > 0
+                                  ? Math.round((m.kcal / m.quantityG) * editing.grams)
+                                  : 0}{' '}
+                                kcal
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                aria-label={`${m.foodName} 少一点`}
+                                onClick={() =>
+                                  setEditing({
+                                    id: m.id,
+                                    grams: Math.max(step, editing.grams - step),
+                                  })
+                                }
+                                className="touch-target rounded-full bg-sunken px-4 text-subhead text-ink transition-colors hover:bg-raised"
+                              >
+                                −
+                              </button>
+                              <span className="tabular min-w-24 text-center text-subhead text-ink">
+                                {portionText({
+                                  quantityG: editing.grams,
+                                  servingGrams: m.servingGrams,
+                                  servingLabel: m.servingLabel,
+                                })}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`${m.foodName} 多一点`}
+                                onClick={() =>
+                                  setEditing({
+                                    id: m.id,
+                                    grams: Math.min(5000, editing.grams + step),
+                                  })
+                                }
+                                className="touch-target rounded-full bg-sunken px-4 text-subhead text-ink transition-colors hover:bg-raised"
+                              >
+                                ＋
+                              </button>
+                              <span className="flex-1" />
+                              <button
+                                type="button"
+                                onClick={() => setEditing(null)}
+                                className="touch-target rounded-full px-3 text-subhead text-ink-2 transition-colors hover:text-ink"
+                              >
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isPending}
+                                onClick={() => handleResize(m.id, editing.grams)}
+                                className="touch-target rounded-full bg-accent px-4 text-subhead font-medium text-on-accent transition-opacity hover:opacity-90 disabled:opacity-40"
+                              >
+                                保存
+                              </button>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    }
+
+                    return (
+                      <li key={m.id} className="flex items-center gap-3 px-4 py-3">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-subhead text-ink">{m.foodName}</span>
+                          <span className="block text-caption-1 text-ink-3">
+                            {portionText(m)}
+                            {/* 份量可改。做成文字按钮而不是图标：这里空间够，
+                                而且「改」比一个铅笔图标更不容易被忽略。 */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setError(null);
+                                setEditing({ id: m.id, grams: m.quantityG });
+                              }}
+                              aria-label={`改 ${m.foodName} 的份量，当前 ${portionText(m)}`}
+                              className="ml-2 text-caption-1 text-accent-blue transition-opacity hover:opacity-70"
+                            >
+                              改
+                            </button>
+                          </span>
                         </span>
-                      </span>
-                      <span className="tabular shrink-0 text-subhead text-ink-2">
-                        {Math.round(m.kcal)} kcal
-                      </span>
-                      <button
-                        type="button"
-                        disabled={isPending}
-                        onClick={() => handleDelete(m.id)}
-                        aria-label={`删除 ${m.foodName}`}
-                        className="touch-target shrink-0 rounded-full px-3 text-ink-3 transition-colors hover:text-accent-red disabled:opacity-40"
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
+                        <span className="tabular shrink-0 text-subhead text-ink-2">
+                          {Math.round(m.kcal)} kcal
+                        </span>
+                        <button
+                          type="button"
+                          disabled={isPending}
+                          onClick={() => handleDelete(m.id)}
+                          aria-label={`删除 ${m.foodName}`}
+                          className="touch-target shrink-0 rounded-full px-3 text-ink-3 transition-colors hover:text-accent-red disabled:opacity-40"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             );

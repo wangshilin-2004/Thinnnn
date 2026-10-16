@@ -8,6 +8,7 @@ import { WeightTrend } from '@/components/weight-trend';
 import { getDailySummaries, getMealsForDate, getProfile, getWeightSeries, MEAL_LABELS } from '@/db/queries';
 import { requireUser } from '@/lib/auth';
 import { addDays, analyzeTrend, DISCLAIMER, movingAverage, todayInTimezone } from '@/lib/nutrition';
+import { portionText } from '@/lib/portion';
 
 export const metadata: Metadata = { title: '今天' };
 
@@ -209,7 +210,9 @@ export default async function DashboardPage() {
                         >
                           <span className="text-subhead text-ink">
                             {m.foodName}
-                            <span className="text-ink-3">　{m.servingLabel ?? `${m.quantityG} g`}</span>
+                            <span className="text-ink-3">
+                              　{portionText(m)}
+                            </span>
                           </span>
                           <span className="tabular text-footnote text-ink-2">
                             {Math.round(m.kcal)} kcal
