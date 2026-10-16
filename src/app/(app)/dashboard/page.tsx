@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { CalorieRing, MacroBar } from '@/components/calorie-ring';
 import { SiteHeader } from '@/components/site-header';
+import { WeightLogger } from '@/components/weight-logger';
 import { WeightTrend } from '@/components/weight-trend';
 import { getDailySummaries, getMealsForDate, getProfile, getWeightSeries, MEAL_LABELS } from '@/db/queries';
 import { requireUser } from '@/lib/auth';
@@ -34,6 +35,11 @@ export default async function DashboardPage() {
   const avg = movingAverage(weightPoints, 7);
   const latestAvg = [...avg].reverse().find((p) => p.avg !== null)?.avg ?? null;
   const latestWeight = weightPoints[weightPoints.length - 1]?.value ?? null;
+
+  /* 「今天」这一条单独取出来喂给录入条。
+   * 不用 latestWeight：那可能是三天前的值，拿它当「今天已经记过了」会让
+   * 用户以为记上了，实际今天还是空的。 */
+  const todayKg = weightPoints.find((p) => p.date === today)?.value ?? null;
 
   const trend = analyzeTrend(weightPoints, {
     targetKgPerWeek: profile?.rateKgPerWeek ? Number(profile.rateKgPerWeek) : undefined,
@@ -143,6 +149,10 @@ export default async function DashboardPage() {
               <Stat label="7 日均值" value={latestAvg} unit="kg" />
             </div>
           </div>
+
+          {/* 录入条放在图表**上面**：图表是回看，录入是当下的动作。
+              把动作放在需要滚动才看得到的位置，等于鼓励用户不记。 */}
+          <WeightLogger todayKg={todayKg} />
 
           <WeightTrend points={weightPoints} trend={trend} />
 

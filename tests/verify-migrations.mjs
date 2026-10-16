@@ -388,6 +388,40 @@ check(
   `实际 ${s.intake_kcal}`,
 );
 
+// 同一天再记一次体重。应用层走的是 ON CONFLICT DO UPDATE
+//（见 src/app/(app)/log/weight/actions.ts），而上面两条只覆盖了 INSERT 和 DELETE。
+// UPDATE 命中的是触发器里另一段分支（AFTER UPDATE vs AFTER INSERT），
+// 只测 INSERT 会漏掉它 —— 而「发现记错了、改一下」恰恰是最高频的操作。
+await db.query(`
+  insert into public.measurements (user_id,metric,measured_on,value,unit)
+  values ($1,'weight','2026-10-16',69.8,'kg')
+  on conflict (user_id,metric,measured_on)
+  do update set value = excluded.value
+`, [u1]);
+const weightRows = (
+  await db.query(
+    `select count(*)::int as n from public.measurements
+     where user_id=$1 and metric='weight' and measured_on='2026-10-16'`,
+    [u1],
+  )
+).rows[0];
+s = (
+  await db.query(
+    `select * from public.daily_summary where user_id=$1 and log_date='2026-10-16'`,
+    [u1],
+  )
+).rows[0];
+check(
+  '同一天重复记体重是覆盖而不是新增（仍为 1 行）',
+  weightRows.n === 1,
+  `实际 ${weightRows.n} 行`,
+);
+check(
+  '覆盖后 daily_summary.weight_kg 同步为 69.8',
+  Number(s.weight_kg) === 69.8,
+  `实际 ${s.weight_kg}`,
+);
+
 // 删除体重记录 → weight_kg 应变回 NULL，但行保留
 await db.query(`delete from public.measurements where user_id=$1 and metric='weight'`, [u1]);
 s = (

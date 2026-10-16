@@ -78,12 +78,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN">
+    /* suppressHydrationWarning 必须挂在 <html> 上 —— 属性会被脚本改掉的就是它。
+     * 这里踩过一次：一开始加在了下面那个 <script> 上，因为注释是写在 script 旁边的，
+     * 手就跟着注释走了。但 warning 说的是「<html> 的 class 和客户端不一致」，
+     * 加在 script 上一点用都没有，开发浮层照样显示 "1 Issue"。
+     *
+     * React 的这个属性只作用于元素**自身**的属性与文本，不向下传递，
+     * 所以子孙节点（body 及整棵树）的校验完全不受影响，不会掩盖真实的手水不合。
+     * 这正是 next-themes 等主题库的标准做法。 */
+    <html lang="zh-CN" suppressHydrationWarning>
       <head>
-        {/* suppressHydrationWarning 只作用在这一层：脚本改过 <html> 之后
-         * React 不再对它的属性差异报错，但子孙节点仍然正常校验。
-         * 类型上 dangerouslySetInnerHTML 与 children 互斥，所以这里不能有子节点。 */}
         <script
+          /* 这个也留着：脚本节点本身的属性同样由内联 HTML 决定，
+           * 留一个 suppress 可以让将来往上面加 data-* 时不至于又炸一次。 */
           suppressHydrationWarning
           dangerouslySetInnerHTML={{ __html: themeInitScript }}
         />
