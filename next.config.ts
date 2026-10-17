@@ -35,6 +35,60 @@ const nextConfig: NextConfig = {
     // 我们在 P1 阶段不会有文件上传，但饮食记录将来可能带照片，先留出余量。
     serverActions: { bodySizeLimit: '2mb' },
   },
+
+  // ────────────────────────────────────────────────────────────
+  // 安全响应头。
+  //
+  // 为什么放这里而不是 middleware：headers() 是**静态配置**，在
+  // 边缘层就加上了，不消耗函数执行时间，也不会因为 middleware 里
+  // 某次判断失误而漏掉某个路径。
+  //
+  // 部署后实测发现线上**只有 HSTS**（Vercel 自动加的），
+  // X-Content-Type-Options / Referrer-Policy / X-Frame-Options
+  // 全都是没有的 —— Next.js 不会自动加这些，得自己声明。
+  // ────────────────────────────────────────────────────────────
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          // 禁止浏览器「猜」响应类型。没有它，一个内容其实是 HTML
+          // 的响应可能被浏览器当页面执行（MIME sniffing）。
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+
+          // 不让别的站点把我们嵌进 iframe —— 防点击劫持。
+          // 本站没有任何需要被嵌入的场景，所以直接 DENY 而非 SAMEORIGIN。
+          { key: 'X-Frame-Options', value: 'DENY' },
+
+          // 跨站跳转时只带域名，不带完整路径。
+          // 认证回调的 URL 里可能带 token，别把它漏给第三方。
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+
+          // 明确关掉用不到的能力。
+          // 不声明的意思不是「禁用」，而是「没限制」。
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), payment=()',
+          },
+        ],
+      },
+    ];
+  },
 };
+
+/*
+ * ── 关于 Content-Security-Policy：故意没加 ──
+ *
+ * CSP 是防 XSS 最有用的一道防线，但 Next.js 的 App Router 会在 HTML 里
+ * 内联一批启动脚本（hydration 用）。没有 nonce 机制的话，CSP 里必须写
+ * script-src 'unsafe-inline' —— 而它恰恰放行了内联脚本，等于把 CSP 最想
+ * 防的那类攻击又放开，只剩心理安慰。
+ *
+ * 真要上 CSP，得做 nonce 传递：middleware 生成随机 nonce → 写进请求头 →
+ * Next.js 读出来塞进每个 script 标签。改动面不小，且要逐个确认内联点。
+ *
+ * 结论：宁可不加，也不要加一个看起来有、实际上漏的 CSP。
+ * 真要做，单独立一个任务，别混在日常提交里。
+ */
 
 export default nextConfig;
