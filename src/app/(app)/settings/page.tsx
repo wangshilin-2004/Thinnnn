@@ -34,6 +34,33 @@ export default async function SettingsPage() {
         <PasswordForm />
 
         <section className="flex flex-col gap-space-3 rounded-xl border border-hairline bg-card p-space-5">
+          <h2 className="text-headline font-semibold text-ink">导出数据</h2>
+          <p className="prose-measure text-footnote text-ink-3">
+            把全部记录下载成 CSV。Excel、Numbers、WPS 都能直接打开，
+            换工具或者想自己算点什么都行 —— 数据是你的，不该被锁在这个网站里。
+          </p>
+          <div className="flex flex-wrap gap-space-3">
+            {/* 用 <a download> 而不是按钮：下载必须由浏览器发起一个真 GET，
+                 fetch + Blob 那套会把整个文件读进内存再存盘，几百条记录的
+                 CSV 没问题，但没必要多绕一层。 */}
+            <a
+              href="/settings/export?kind=meals"
+              download
+              className="touch-target inline-flex items-center justify-center rounded-md border border-separator bg-sunken px-space-5 py-space-3 text-subhead font-semibold text-ink transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              饮食记录
+            </a>
+            <a
+              href="/settings/export?kind=weights"
+              download
+              className="touch-target inline-flex items-center justify-center rounded-md border border-separator bg-sunken px-space-5 py-space-3 text-subhead font-semibold text-ink transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              体重记录
+            </a>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-space-3 rounded-xl border border-hairline bg-card p-space-5">
           <h2 className="text-headline font-semibold text-ink">退出登录</h2>
           <p className="prose-measure text-footnote text-ink-3">
             这台设备上的登录状态会被清掉。换台设备或借别人用之前点一下。

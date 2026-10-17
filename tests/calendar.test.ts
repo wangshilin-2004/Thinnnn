@@ -23,6 +23,7 @@ import {
   buildCalendarGrid,
   formatCnDate,
   formatCnMonthDay,
+  formatLocalDateTime,
   formatShort,
   isDateString,
   monthLabels,
@@ -207,5 +208,46 @@ describe('monthLabels：只在列里出现 1 号时标一次', () => {
     // 10-01（周四）落在第一列，之后还剩一列装 10-04。
     assert.equal(weeks.length, 2);
     assert.deepEqual(monthLabels(weeks), [10, null]);
+  });
+});
+
+describe('formatLocalDateTime —— 导出用的时刻格式化', () => {
+  it('UTC 时刻按东八区显示（不是原样回显 Z 时间）', () => {
+    // 数据库里存 timestamptz，直接 toISOString 会让用户看到 UTC
+    assert.equal(
+      formatLocalDateTime('2026-10-17T07:14:40.000Z', 'Asia/Shanghai'),
+      '2026-10-17 15:14',
+    );
+  });
+
+  it('跨日：UTC 下午的 16:30 在东八区已经是第二天 00:30', () => {
+    assert.equal(
+      formatLocalDateTime('2026-10-17T16:30:00.000Z', 'Asia/Shanghai'),
+      '2026-10-18 00:30',
+    );
+  });
+
+  it('午夜是 00:00，不是 24:00', () => {
+    // hour12:false 在某些 locale 下会给出 24:00，所以实现里用了 hourCycle: 'h23'
+    assert.equal(
+      formatLocalDateTime('2026-10-17T16:00:00.000Z', 'Asia/Shanghai'),
+      '2026-10-18 00:00',
+    );
+  });
+
+  it('同一时刻在不同时区给出不同结果', () => {
+    const iso = '2026-10-17T07:14:00.000Z';
+    assert.equal(formatLocalDateTime(iso, 'Asia/Shanghai'), '2026-10-17 15:14');
+    assert.equal(formatLocalDateTime(iso, 'UTC'), '2026-10-17 07:14');
+    assert.equal(formatLocalDateTime(iso, 'America/New_York'), '2026-10-17 03:14');
+  });
+
+  it('非法时间字符串返回空串，不抛异常', () => {
+    assert.equal(formatLocalDateTime('不是时间', 'Asia/Shanghai'), '');
+  });
+
+  it('非法时区名返回空串，不抛异常', () => {
+    // profile.timezone 是用户可改的字段，存了脏值也不能让导出整个崩掉
+    assert.equal(formatLocalDateTime('2026-10-17T07:14:00.000Z', 'Mars/Olympus'), '');
   });
 });

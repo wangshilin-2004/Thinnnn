@@ -289,3 +289,99 @@ export async function getMealTotalsToday(userId: string, date: string) {
     return totals;
   });
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  导出专用查询
+ * ═══════════════════════════════════════════════════════════════
+ *
+ *  与上面那些查询的区别：**不分页、不按日期切片，一次全取**。
+ *  导出是「拿走全部」，少一行都是数据丢失，所以宁可在数据量大的时候
+ *  慢一点，也不加 LIMIT。
+ *
+ *  为什么不在导出里现算份数：导出的是**当时写进库里的快照**
+ *  （kcal / protein_g 这些列在 meal_items 上是冗余存储的），
+ *  这样即使用户后来改了食物库，导出的文件仍然和他当时看到的一致。
+ */
+
+export type MealExportRow = {
+  date: string; // YYYY-MM-DD
+  mealType: MealType;
+  loggedAt: string; // ISO 8601，带时区
+  foodName: string;
+  servingLabel: string | null;
+  quantityG: number;
+  kcal: number;
+  proteinG: number;
+  fatG: number;
+  carbG: number;
+  note: string | null;
+};
+
+/** 全部饮食记录，按日期、记录时刻升序。 */
+export async function getAllMeals(userId: string): Promise<MealExportRow[]> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx
+      .select({
+        date: mealItems.logDate,
+        mealType: mealItems.mealType,
+        loggedAt: mealItems.loggedAt,
+        foodName: mealItems.foodName,
+        servingLabel: mealItems.servingLabel,
+        quantityG: mealItems.quantityG,
+        kcal: mealItems.kcal,
+        proteinG: mealItems.proteinG,
+        fatG: mealItems.fatG,
+        carbG: mealItems.carbG,
+        note: mealItems.note,
+      })
+      .from(mealItems)
+      .where(eq(mealItems.userId, userId))
+      .orderBy(asc(mealItems.logDate), asc(mealItems.loggedAt));
+
+    return rows.map((r) => ({
+      date: r.date,
+      mealType: r.mealType as MealType,
+      loggedAt: r.loggedAt.toISOString(),
+      foodName: r.foodName,
+      servingLabel: r.servingLabel,
+      quantityG: num(r.quantityG),
+      kcal: num(r.kcal),
+      proteinG: num(r.proteinG),
+      fatG: num(r.fatG),
+      carbG: num(r.carbG),
+      note: r.note,
+    }));
+  });
+}
+
+export type WeightExportRow = {
+  date: string; // YYYY-MM-DD
+  weightKg: number;
+  measuredAt: string | null; // ISO 8601；早期记录可能没填具体时刻
+  note: string | null;
+};
+
+/** 全部体重记录，按日期升序。只取 metric='weight'，不掺其它指标。 */
+export async function getAllWeights(userId: string): Promise<WeightExportRow[]> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx
+      .select({
+        date: measurements.measuredOn,
+        value: measurements.value,
+        measuredAt: measurements.measuredAt,
+        note: measurements.note,
+      })
+      .from(measurements)
+      .where(
+        and(eq(measurements.userId, userId), eq(measurements.metric, 'weight')),
+      )
+      .orderBy(asc(measurements.measuredOn));
+
+    return rows.map((r) => ({
+      date: r.date,
+      weightKg: num(r.value),
+      measuredAt: r.measuredAt === null ? null : r.measuredAt.toISOString(),
+      note: r.note,
+    }));
+  });
+}

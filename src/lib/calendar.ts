@@ -175,3 +175,37 @@ export function monthLabels(
     return Number(firstOfMonth.date.slice(5, 7));
   });
 }
+
+/**
+ * 把带时区的时刻（ISO 字符串）格式化成**用户时区**下的「YYYY-MM-DD HH:mm」。
+ *
+ * 为什么需要它：数据库里存的是 `timestamptz`，导出成 CSV 时如果直接写
+ * `toISOString()`，用户会看到 UTC 时间 —— 晚上 11 点记的东西在表里是
+ * 前一天 15:00，看起来像导错了。
+ *
+ * 用 `sv-SE` 这个 locale 不是随手挑的：它的日期顺序恰好就是
+ * ISO 的 `YYYY-MM-DD HH:mm`，省掉手工拼字段；而手工拼
+ * `getFullYear()` 那一套会用到**运行机器的本地时区**，
+ * 服务器在 UTC、用户在东八区时就错了。
+ *
+ * 解析失败或时区名非法时返回空字符串 —— 导出功能不应该因为一行脏数据
+ * 整个失败。
+ */
+export function formatLocalDateTime(iso: string, timezone: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(d);
+  } catch {
+    /* 时区名不合法（比如 profile 里存了脏值）→ 宁可空着也不抛 */
+    return '';
+  }
+}
