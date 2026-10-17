@@ -17,6 +17,9 @@
 //   node cdp.mjs shot 390 1560 2 /tmp/m.png
 //   node cdp.mjs diag 390
 //   node cdp.mjs eval 390 "document.querySelector('h1').getBoundingClientRect().width"
+//
+// 测线上站点：加 ORIGIN 环境变量，路径就会拼到那个源上。
+//   ORIGIN=https://thinnnn.top node cdp.mjs diag 390 /login
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -25,7 +28,10 @@ import { join, dirname } from 'node:path';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = Number(process.env.CDP_PORT || 9333);
-const BASE = `http://localhost:${process.env.PORT || 3100}`;
+/* 打哪个源：默认本地 dev server，设 ORIGIN 就打线上。
+ * 「本地跑通」和「线上跑通」是两件事 —— 线上有真域名、真 Cookie 域、
+ * 真 Supabase 会话，本地过了不代表线上过了。 */
+const BASE = process.env.ORIGIN || `http://localhost:${process.env.PORT || 3100}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
