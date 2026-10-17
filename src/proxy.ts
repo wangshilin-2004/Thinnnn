@@ -23,6 +23,40 @@ import { NextResponse, type NextRequest } from 'next/server';
  *   能读也能写响应头的中间层 —— 才写得回去。少了它，用户登录一小时后
  *   会毫无征兆地被登出。 */
 export default async function proxy(request: NextRequest) {
+  /* ── 兜底一：把落在任意路径上的 ?code= 捡回 /auth/callback ──
+   *
+   * 这是排查魔法链接时撞见的最阴险的一个失败模式：
+   *
+   *   Supabase 发信前会检查 emailRedirectTo 是否在项目的 Redirect URLs
+   *   白名单里。如果不在，它**不会报错**，而是悄悄把回跳目标替换成
+   *   Site URL。于是真实邮件里那条链接会把用户打到
+   *
+   *       https://<域名>/?code=xxxxxxxx
+   *
+   *   —— 一个没有任何代码处理 code 的地址。用户看到的现象是「点完链接
+   *   还是没登录」，服务端日志里也没有一条错误。配置错了一格，表现却像
+   *   「产品坏了」，而且完全不告诉你坏在哪。
+   *
+   *   真正的修法是把白名单配好（见 docs/05 的 1.1 节）。但配置是外部状态：
+   *   会漂移、会被改错、会在换域名时忘掉。所以代码这边也留一道兜底 ——
+   *   只要有 code 落在任何页面上，就交给唯一知道怎么换会话的那条路由。
+   *   配对了它不介入，配错了它救命。
+   *
+   * 为什么只认 code、不认 error：
+   *   /auth/callback 自己出错时会跳到 /login?error=exchange。如果这里也把
+   *   error 当成「要转发的信号」，就成了
+   *   /login?error=exchange → /auth/callback?error=exchange → /login?error=exchange
+   *   一个无限重定向。只捡 code 就没有这个环。
+   *
+   * 为什么放在刷新令牌之前：
+   *   换会话靠的是 code，跟旧令牌无关，先转走能省掉一次 GoTrue 往返。 */
+  const { pathname, searchParams } = request.nextUrl;
+  if (pathname !== '/auth/callback' && searchParams.has('code')) {
+    const redirected = request.nextUrl.clone();
+    redirected.pathname = '/auth/callback';
+    return NextResponse.redirect(redirected);
+  }
+
   let response = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
