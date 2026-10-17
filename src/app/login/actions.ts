@@ -107,6 +107,20 @@ export async function sendMagicLink(_prev: LoginState, formData: FormData): Prom
     /* 错误原文只进服务端日志。回给用户的是笼统说法 ——
      * 区分「这个邮箱不存在」和「发信失败」等于提供了一个账号枚举接口。 */
     console.error('[sendMagicLink]', error.message);
+
+    /* 例外：发信频率限制要说清楚。
+     * Supabase 自带发信服务对同一个邮箱有硬性间隔，撞上时回 429。这里如果
+     * 还说「稍后再试」，用户会以为坏了、反复点，反而把窗口越推越远 ——
+     * 实测连点三次能让接下来一小时谁都进不来。
+     * 顺带记一笔：`admin/generate_link` 也吃同一个计数，排障时别拿它猛试，
+     * 会把正常用户要用的额度提前烧掉。 */
+    if (error.code === 'over_email_send_rate_limit') {
+      return {
+        status: 'error',
+        message:
+          '发信太频繁了 —— 同一个邮箱有硬性间隔，等一分钟再点。急的话直接切到「密码」登录。',
+      };
+    }
     return { status: 'error', message: '发送失败，稍后再试一次。' };
   }
 
