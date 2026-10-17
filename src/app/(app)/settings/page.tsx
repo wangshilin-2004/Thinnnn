@@ -7,7 +7,9 @@ import { listInviteCodes, isInviteOwner } from '@/lib/invite-admin';
 import { InviteCodes } from './invite-codes';
 import { EmailForm, PasswordForm, SignOutButton } from './settings-forms';
 
-export const metadata = { title: '设置 · 轻记' };
+/* 别在这里写「 · 轻记」—— 根布局的 title.template 会再拼一次，
+   结果就是「设置 · 轻记 · 轻记」。其他页面都只写裸标题。 */
+export const metadata = { title: '设置' };
 
 /* 必须 force-dynamic：这一页渲染的是「你是谁」，取决于请求带来的 Cookie。
  * 让 Next 把它静态化的话，构建时算出来的那份 HTML（没有登录态）
