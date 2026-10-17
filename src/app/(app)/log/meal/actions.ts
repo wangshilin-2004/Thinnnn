@@ -5,9 +5,10 @@ import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { withUser } from '@/db';
+import type { PickerFood } from '@/db/queries';
 import { foodServings, foods, mealItems } from '@/db/schema';
 import { requireUser } from '@/lib/auth';
-import { scaleNutrition, toPer100g } from '@/lib/nutrition';
+import { round1, scaleNutrition, toPer100g } from '@/lib/nutrition';
 
 /* 记一餐的写入路径。
  *
@@ -265,4 +266,172 @@ export async function updateMealQuantity(raw: unknown): Promise<{ ok: boolean; e
   revalidatePath('/dashboard');
   revalidatePath('/log/meal');
   return { ok: true };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ *  自建食物 —— 食物库里没有的东西也要能记
+ * ═══════════════════════════════════════════════════════════════
+ *
+ * 为什么必须有这条路：内置食物库是「常见食物」，但食堂窗口和外卖的花样
+ * 远不止于此。库里没有的食物如果记不了，用户当天就会断记录 —— 而
+ * 「记录太麻烦导致坚持率下降」正是这个产品调研里最主要的失败原因。
+ * 194 条永远不够，所以缺口要让用户自己补，而且要在记录现场补。
+ *
+ * 为什么按「这一份」而不是「每 100 克」让用户填 —— 这是这个 action 里
+ * 唯一真正需要想清楚的地方：
+ *   新手知道自己「吃了一整份」，不知道这份每 100 克多少大卡。要求填
+ *   每 100 g 等于要求他先做一次除法，而现场每多一个空格，记录率就掉
+ *   一点。所以入口收「这一份多重、多少大卡」，折算成每 100 g 是我们
+ *   的事 —— 而且用的就是别处同一个 toPer100g()，不另起一套换算。
+ *
+ * 数据库那一侧：的 foods 表本就为这件事设计好了（owner_id 非空 = 只有
+ * 本人可见，slug 留空），RLS 的 foods_insert_own 策略也早就写好了
+ * WITH CHECK (owner_id = auth.uid())。缺的只是这个入口和这段代码。
+ */
+
+const customFoodInput = z.object({
+  /* 名字是必填的 —— 一条没有名字的食物会变成搜索结果里的空白行，
+   * 用户点下去才发现选了个不知道是什么的东西。数据库里也有同样的
+   * CHECK（foods_name_not_blank），两层都挡一次。 */
+  name: z.string().trim().min(1, '给这个食物起个名字').max(30, '名字太长了，30 字以内'),
+
+  /* 一「份」的描述：多少克、叫什么。
+   * 默认 100 g / 「1 份」—— 用户什么都不改也能直接记下来。 */
+  servingGrams: z.number().positive('份量要大于 0').max(2000, '一份不会超过 2 公斤吧？').default(100),
+  servingLabel: z.string().trim().min(1).max(8).default('1 份'),
+
+  /* 这一份的热量。上限 3000 只是拦明显的手滑（比如把「克」填进了「大卡」）。 */
+  servingKcal: z.number('热量要填数字').min(0, '热量不能是负数').max(3000, '这一份的热量看起来不太对'),
+
+  /* 三大营养素是可选的，按「这一份」填。
+   * 不填就记 0 —— 这会让当天的营养比例偏低，但总比逼着新手去查成分表、
+   * 查不到就干脆不记要好。填了的用户会得到更准的图表。 */
+  proteinG: z.number().min(0).max(500).optional(),
+  fatG: z.number().min(0).max(500).optional(),
+  carbG: z.number().min(0).max(500).optional(),
+});
+
+export type CreateCustomFoodResult = { ok: true; food: PickerFood } | { ok: false; error: string };
+
+/** 用户自建食物的分类。故意用一个内置库里没有的名字：
+ *  前端「按分类浏览」会把未知分类排在最后（见 meal-logger 的 categories），
+ *  这样「我的」永远在末尾，不会打乱内置食物的浏览顺序。 */
+const CUSTOM_CATEGORY = '我的';
+
+export async function createCustomFood(raw: unknown): Promise<CreateCustomFoodResult> {
+  const user = await requireUser();
+
+  const parsed = customFoodInput.safeParse(raw);
+  if (!parsed.success) {
+    /* 和别的 action 不同，这里**把 zod 的第一条错误文案回传给用户**。
+     * 原因：其他 action 的参数来自我们自己的客户端，校验失败说明是代码 bug，
+     * 泄漏内部结构没有收益；而这里的参数是用户在表单里一个字一个字敲的，
+     * 「名字太长了」这种信息必须回到他眼前，否则表单只会静默不提交。 */
+    return { ok: false, error: parsed.error.issues[0]?.message ?? '参数不合法' };
+  }
+  const d = parsed.data;
+
+  /* 折算成「每 100 克」—— 和 addMealItem / updateMealQuantity 用的是
+   * 同一个函数，保证全站只有一处换算式。 */
+  const per100 = toPer100g(
+    {
+      kcal: d.servingKcal,
+      proteinG: d.proteinG ?? 0,
+      fatG: d.fatG ?? 0,
+      carbG: d.carbG ?? 0,
+    },
+    d.servingGrams,
+  );
+  const kcal100 = round1(per100.kcal);
+  const protein100 = round1(per100.proteinG);
+  const fat100 = round1(per100.fatG);
+  const carb100 = round1(per100.carbG);
+
+  /* 物理上限检查，必须在写库之前做。
+   * 数据库里也有 CHECK（kcal ≤ 900、各营养素 ≤ 100），但触发 CHECK 只会
+   * 抛一个 Postgres 错误，用户看到的是「写入失败」。逐条比对一下，
+   * 就能把「你填的数字违反了物理定律」说清楚。 */
+  if (kcal100 > 900) {
+    return {
+      ok: false,
+      error:
+        `折下来是每 100 克 ${kcal100} 大卡，超过了物理上限（纯油脂也才 900）。` +
+        '多半是把「这一份的重量」填小了 —— 比如一份 500 大卡的盖饭，重量应该是 400 克左右，不是 40 克。',
+    };
+  }
+  if (protein100 > 100 || fat100 > 100 || carb100 > 100) {
+    return {
+      ok: false,
+      error: '折下来每 100 克里有超过 100 克的营养素 —— 检查一下份量（克）和营养素的单位是不是填反了。',
+    };
+  }
+
+  const created = await withUser(user.id, async (tx) => {
+    const food = (
+      await tx
+        .insert(foods)
+        .values({
+          /* ownerId = 自己。这一行就是「自建食物」的标记，
+           * RLS 的 foods_select_visible 靠它决定谁能看见。 */
+          ownerId: user.id,
+          name: d.name,
+          category: CUSTOM_CATEGORY,
+          kcal: String(kcal100),
+          proteinG: String(protein100),
+          fatG: String(fat100),
+          carbG: String(carb100),
+          source: 'user',
+          isVerified: false,
+        })
+        .returning()
+    )[0];
+
+    if (!food) return null;
+
+    /* 同时建一个默认份量。没有份量的食物在选择器里仍然能出现
+     * （查询用了 LEFT JOIN，见 getFoodsForPicker），但「点一下就记好」
+     * 会退化成「请手动输入克数」—— 那就破坏了这一屏的立身之本。 */
+    const serving = (
+      await tx
+        .insert(foodServings)
+        .values({
+          foodId: food.id,
+          label: d.servingLabel,
+          grams: String(d.servingGrams),
+          isDefault: true,
+          sortOrder: 0,
+        })
+        .returning()
+    )[0];
+
+    return { food, serving };
+  });
+
+  if (!created) return { ok: false, error: '没创建成功，再试一次' };
+
+  revalidatePath('/dashboard');
+  revalidatePath('/log/meal');
+
+  /* 返回的形状和 getFoodsForPicker 完全一致（PickerFood），
+   * 这样客户端可以直接把它塞进目录、直接记一条，不用为它写特例。 */
+  return {
+    ok: true,
+    food: {
+      id: created.food.id,
+      name: created.food.name,
+      aliases: created.food.aliases ?? [],
+      category: created.food.category,
+      kcalPer100: kcal100,
+      proteinPer100: protein100,
+      fatPer100: fat100,
+      carbPer100: carb100,
+      serving: created.serving
+        ? {
+            id: created.serving.id,
+            label: created.serving.label,
+            grams: Number(created.serving.grams),
+          }
+        : null,
+    },
+  };
 }

@@ -140,6 +140,14 @@ function round(n: number, decimals = 0): number {
   return Math.round(n * f) / f;
 }
 
+/* 数据库里所有营养列都是 numeric(…, 1)，即只保留一位小数。
+ * 写入后再读回来会经过一次四舍五入 —— 如果返回给客户端的值不先对齐，
+ * 「刚记下显示 123.45」和「刷新后显示 123.5」就会看起来像 bug。
+ * 所以凡是 numeric(…,1) 的值，出库前都过一下这个。 */
+export function round1(n: number): number {
+  return round(n, 1);
+}
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(Math.max(n, lo), hi);
 }

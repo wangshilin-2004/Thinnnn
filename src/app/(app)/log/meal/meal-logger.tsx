@@ -7,6 +7,7 @@ import type { MealType, PickerFood } from '@/db/queries';
 import { portionStep, portionText } from '@/lib/portion';
 
 import { addMealItem, deleteMealItem, updateMealQuantity } from './actions';
+import { CustomFoodForm } from './custom-food-form';
 
 /* 记一餐的交互层。
  *
@@ -137,6 +138,13 @@ export function MealLogger({
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  /* 本次会话里新建的食物。服务端 revalidatePath 之后会重新下发 catalog，
+   * 但那次往返有延迟 —— 用户刚建完就想去搜索框里搜到它。先在本地补上，
+   * 服务端数据到了按 id 去重（见 allFoods）。 */
+  const [addedFoods, setAddedFoods] = useState<PickerFood[]>([]);
+  const [showCustom, setShowCustom] = useState(false);
+  const [customInitialName, setCustomInitialName] = useState('');
+
   const [optimistic, applyPatch] = useOptimistic(
     todaysMeals,
     (state: MealItem[], patch: Patch) => {
@@ -163,15 +171,23 @@ export function MealLogger({
 
   const q = query.trim();
 
+  /* 内置库 + 本次会话新建的。按 id 去重：revalidate 之后服务端会把新食物
+   * 也放进 catalog，两处同时有它，不去重就会在搜索结果里出现两次。 */
+  const allFoods = useMemo(() => {
+    if (addedFoods.length === 0) return catalog;
+    const known = new Set(catalog.map((f) => f.id));
+    return [...catalog, ...addedFoods.filter((f) => !known.has(f.id))];
+  }, [catalog, addedFoods]);
+
   const results = useMemo(() => {
     if (!q) return [];
-    return catalog
+    return allFoods
       .map((f) => ({ food: f, s: scoreFood(f, q) }))
       .filter((x) => x.s > 0)
       .sort((a, b) => b.s - a.s || a.food.kcalPer100 - b.food.kcalPer100)
       .slice(0, 40)
       .map((x) => x.food);
-  }, [catalog, q]);
+  }, [allFoods, q]);
 
   /* 按分类分组，用于「没搜索时」的浏览视图。
    * 用 reduce 而不是 SQL 的 group by：数据已经在客户端了，
@@ -182,7 +198,7 @@ export function MealLogger({
    * 只能靠搜索找到，用户根本不知道它们存在。 */
   const categories = useMemo(() => {
     const map = new Map<string, PickerFood[]>();
-    for (const f of catalog) {
+    for (const f of allFoods) {
       const list = map.get(f.category);
       if (list) list.push(f);
       else map.set(f.category, [f]);
@@ -190,7 +206,7 @@ export function MealLogger({
     const known = CATEGORY_ORDER.filter((c) => map.has(c));
     const rest = [...map.keys()].filter((c) => !(CATEGORY_ORDER as readonly string[]).includes(c));
     return [...known, ...rest].map((c) => [c, map.get(c)!] as const);
-  }, [catalog]);
+  }, [allFoods]);
 
   const shownCategory = pickedCategory ?? categories[0]?.[0] ?? null;
   const shownFoods = categories.find(([c]) => c === shownCategory)?.[1] ?? [];
@@ -229,6 +245,15 @@ export function MealLogger({
         setError(res.error);
       }
     });
+  }
+
+  /* 新建食物成功：塞进本地目录、收起表单、立刻记一份。
+   * 「建完就记」是刻意的 —— 会打开这个表单的人都是刚吃完东西，
+   * 让他再回搜索框把自己刚打的字打一遍，纯属浪费。 */
+  function handleCreated(food: PickerFood) {
+    setAddedFoods((prev) => [...prev, food]);
+    setShowCustom(false);
+    handleAdd(food);
   }
 
   function handleDelete(id: string) {
@@ -311,6 +336,30 @@ export function MealLogger({
         />
       </div>
 
+      {/* 自建食物的入口。就放在搜索框正下方，不放页面底部 ——
+          它服务的是「搜了但没搜到」这个瞬间，而那个瞬间用户的眼睛
+          还停在搜索框上。 */}
+      {!showCustom && (
+        <button
+          type="button"
+          onClick={() => {
+            setCustomInitialName('');
+            setShowCustom(true);
+          }}
+          className="touch-target text-footnote text-ink-2 underline-offset-2 hover:text-ink hover:underline"
+        >
+          + 食物库里没有？自己加一个
+        </button>
+      )}
+
+      {showCustom && (
+        <CustomFoodForm
+          initialName={customInitialName}
+          onCreated={handleCreated}
+          onCancel={() => setShowCustom(false)}
+        />
+      )}
+
       {flash && (
         <p
           role="status"
@@ -326,16 +375,30 @@ export function MealLogger({
       )}
 
       {/* ── 搜索结果 ─────────────────────────────────────────── */}
-      {q ? (
+      {q && !showCustom ? (
         <section>
           <h2 className="mb-2 text-footnote text-ink-3">
             {results.length > 0 ? `找到 ${results.length} 项` : '没找到'}
           </h2>
           {results.length === 0 ? (
-            <p className="prose-measure text-subhead text-ink-2">
-              食物库里暂时没有「{q}」。可以先到「我的食物」里自建一条，或者换个叫法试试
-              —— 比如「米饭」而不是「大米」。
-            </p>
+            <div className="space-y-space-3">
+              <p className="prose-measure text-subhead text-ink-2">
+                食物库里暂时没有「{q}」。换个叫法试试 —— 比如「米饭」而不是「大米」；
+                或者自己加一个，只要知道这一份大概多少大卡。
+              </p>
+              {!showCustom && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomInitialName(q);
+                    setShowCustom(true);
+                  }}
+                  className="touch-target rounded-md bg-brand px-space-5 py-space-3 text-subhead font-semibold text-on-accent transition-opacity"
+                >
+                  加一个「{q}」
+                </button>
+              )}
+            </div>
           ) : (
             <ul className="divide-y divide-separator overflow-hidden rounded-md bg-card">
               {results.map((food) => (
@@ -349,7 +412,7 @@ export function MealLogger({
             </ul>
           )}
         </section>
-      ) : (
+      ) : !showCustom ? (
         <>
           {/* ── 最近吃过 ───────────────────────────────────────── */}
           {recent.length > 0 && (
@@ -363,7 +426,7 @@ export function MealLogger({
                       type="button"
                       disabled={isPending || !r.foodId}
                       onClick={() => {
-                        const food = catalog.find((f) => f.id === r.foodId);
+                        const food = allFoods.find((f) => f.id === r.foodId);
                         if (food) handleAdd(food);
                       }}
                       className="touch-target rounded-full border border-hairline bg-card px-4 py-2 text-left transition-colors hover:border-separator-opaque disabled:opacity-40"
@@ -430,7 +493,7 @@ export function MealLogger({
             </ul>
           </section>
         </>
-      )}
+      ) : null}
 
       {/* ── 今天已记录 ───────────────────────────────────────── */}
       <section>
