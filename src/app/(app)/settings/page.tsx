@@ -2,7 +2,9 @@ import { redirect } from 'next/navigation';
 
 import { SiteHeader } from '@/components/site-header';
 import { getCurrentUser } from '@/lib/auth';
+import { listInviteCodes, isInviteOwner } from '@/lib/invite-admin';
 
+import { InviteCodes } from './invite-codes';
 import { EmailForm, PasswordForm, SignOutButton } from './settings-forms';
 
 export const metadata = { title: '设置 · 轻记' };
@@ -19,6 +21,24 @@ export default async function SettingsPage() {
    * 分开写能少一次类型断言。 */
   const user = await getCurrentUser();
   if (!user) redirect('/login');
+
+  /* 邀请码卡片只给管理员渲染。
+   * 判断依据是环境变量 OWNER_EMAILS 里有没有这个邮箱 —— 见 src/lib/invite.ts。
+   * 普通用户看不到这一块，也调不动那两个 action（它们各自还有一次校验）。 */
+  const isOwner = isInviteOwner(user.email);
+  let inviteCodes: Awaited<ReturnType<typeof listInviteCodes>> = [];
+  let inviteLoadFailed = false;
+  if (isOwner) {
+    try {
+      inviteCodes = await listInviteCodes();
+    } catch (error) {
+      /* 读失败最常见的原因是 Vercel 上漏配 SUPABASE_SERVICE_ROLE_KEY。
+       * 这里捕获而不让它冒泡：漏配一个可选功能的管理变量，
+       * 不该把整个设置页（改密码、改邮箱、退出登录）都带成 500。 */
+      console.error('[settings] 读取邀请码失败', error);
+      inviteLoadFailed = true;
+    }
+  }
 
   return (
     <>
@@ -59,6 +79,18 @@ export default async function SettingsPage() {
             </a>
           </div>
         </section>
+
+        {isOwner && inviteLoadFailed && (
+          <section className="flex flex-col gap-space-3 rounded-xl border border-hairline bg-card p-space-5">
+            <h2 className="text-headline font-semibold text-ink">邀请码</h2>
+            <p className="prose-measure text-footnote text-ink-3">
+              读不出邀请码列表。这张表只有服务端的数据库连接能读，所以最常见的原因是数据库连不上
+              —— 服务端日志里能看到具体报错。其他的设置不受影响。
+            </p>
+          </section>
+        )}
+
+        {isOwner && !inviteLoadFailed && <InviteCodes codes={inviteCodes} />}
 
         <section className="flex flex-col gap-space-3 rounded-xl border border-hairline bg-card p-space-5">
           <h2 className="text-headline font-semibold text-ink">退出登录</h2>

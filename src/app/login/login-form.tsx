@@ -7,6 +7,10 @@ import { sendMagicLink, signInWithPassword } from './actions';
 /* 初值从 ./state 拿，不能从 ./actions 拿：
  * actions.ts 是 'use server' 文件，只能导出 async 函数。 */
 import { LOGIN_INITIAL } from './state';
+/* INVITE_REQUIRED 是普通常量（src/lib/invite.ts 是纯模块，不含任何服务端代码），
+ * 客户端可以直接读。用它来控制「要不要渲染邀请码输入框」而不是写死，
+ * 是为了让「关掉注册门槛」真的只改一个布尔值 —— 见那个文件头部的说明。 */
+import { INVITE_REQUIRED } from '@/lib/invite';
 
 /* 登录表单，两条通道：
  *
@@ -149,6 +153,34 @@ export function LoginForm() {
             inputMode="email"
             placeholder="you@example.com"
           />
+
+          {/* 邀请码输入框**不给 required**。
+           * 只有「这个邮箱还没注册过」才需要它，老用户登录必须能留空 ——
+           * 标成必填会让每一个老用户每天多卡一道。
+           * 服务端那边的判断写在 actions.ts 的 sendMagicLink 里。 */}
+          {INVITE_REQUIRED && (
+            <div className="flex flex-col gap-space-1">
+              <label htmlFor="inviteCode" className="text-subhead text-ink-2">
+                邀请码
+              </label>
+              <input
+                id="inviteCode"
+                name="inviteCode"
+                type="text"
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                placeholder="XXXX-XXXX"
+                /* text-body 是 17px > 16px，和上面两个输入框同样的理由：
+                 * 避免 iOS Safari 聚焦时把页面放大。 */
+                className="rounded-md border border-separator bg-sunken px-space-4 py-space-3 text-body tracking-widest text-ink uppercase placeholder:tracking-normal placeholder:text-ink-4"
+              />
+              <p className="text-footnote text-ink-3">
+                第一次用才需要（找发码的人要）。已经有账号就留空。
+              </p>
+            </div>
+          )}
+
           <SubmitButton idle="发登录链接" busy="发送中…" />
         </form>
       ) : (

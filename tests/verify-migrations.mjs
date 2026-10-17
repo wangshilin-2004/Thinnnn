@@ -77,6 +77,11 @@ await db.exec(`
   create role anon nologin;
   create role authenticated nologin;
 
+  -- 真实 Supabase 里 anon 默认就持有 public 的 USAGE —— PostgREST 以 anon
+  -- 身份调用 RPC 时靠它才能解析函数名。这里必须补上，否则 0008 的
+  -- 「未登录也能校验邀请码」会在本地假失败（线上其实是通的）。
+  grant usage on schema public to anon;
+
   -- auth.uid() 的真实实现：从 JWT claims 里取 sub
   create or replace function auth.uid() returns uuid
   language sql stable
@@ -113,6 +118,7 @@ const statements0004 = runMigration('0004_foods_integrity_checks.sql');
 const statements0005 = runMigration('0005_harden_grants_and_cascade_fix.sql');
 const statements0006 = runMigration('0006_summary_target_snapshot.sql');
 const statements0007 = runMigration('0007_fix_account_deletion.sql');
+const statements0008 = runMigration('0008_invite_codes_consume.sql');
 
 let migrationError = null;
 try {
@@ -139,12 +145,15 @@ try {
 
   for (const stmt of statements0007) await db.exec(stmt);
   console.log(`  · 0007_fix_account_deletion.sql 执行完成（${statements0007.length} 条语句）`);
+
+  for (const stmt of statements0008) await db.exec(stmt);
+  console.log(`  · 0008_invite_codes_consume.sql 执行完成（${statements0008.length} 条语句）`);
 } catch (e) {
   migrationError = e;
 }
 
 check(
-  '七个迁移文件都能在真 Postgres 上按序跑通',
+  '八个迁移文件都能在真 Postgres 上按序跑通',
   migrationError === null,
   migrationError ? `${migrationError.message}` : '',
 );
@@ -1264,6 +1273,114 @@ const k3 = (
   )
 ).rows[0]?.weight_kg;
 check('【0007】改体重能同步覆盖汇总行（ON CONFLICT 分支未被守护条件挡住）', Number(k3) === 80.5, `实际 ${k3}`);
+
+// ═══════════════════════════════════════════════════════════════════════
+//  【L】0008：邀请码门槛
+// ═══════════════════════════════════════════════════════════════════════
+section('【L】0008：邀请码门槛');
+
+//  这一节真正要守的是【安全边界】，而不只是「函数能跑」：
+//    · invite_codes 是 RLS 开启 + 零策略 + 零 GRANT 的「三不沾」表，
+//      未登录的登录页（anon 角色）读不到它；
+//    · 但登录页必须能校验码，所以给的是两个 SECURITY DEFINER 函数；
+//    · 于是不变量是：**anon 能调函数，但读不到表**。
+//
+//  只测「函数返回 true」会把这条不变量整个漏掉 —— 那样即使有人顺手给
+//  anon 补了一条 select 权限，这里也照样全绿，而邀请码列表已经对所有
+//  访客公开了。
+
+await actAsAdmin();
+await db.query(`
+  insert into public.invite_codes (code, note, max_uses, expires_at)
+  values ('L-TEST-ONE','单次码',1, null),
+         ('L-TEST-MANY','三次码',3, null),
+         ('L-TEST-EXPIRED','过期码',1, now() - interval '1 day')
+`);
+
+//  用 anon 而不是 authenticated：登录页的访问者就是未登录状态，
+//  以 authenticated 测等于测错了角色 —— 那条路在生产上根本不会走。
+//  切身的辅助函数复用【F】组里已有的 actAsAnon()，不要重复定义。
+await actAsAnon();
+
+const lOk = (await db.query(`select public.invite_code_is_valid('L-TEST-ONE') as ok`)).rows[0].ok;
+check('【0008】anon 能调用校验函数，未用过的码返回 true', lOk === true, `实际 ${lOk}`);
+
+const lExpired = (await db.query(`select public.invite_code_is_valid('L-TEST-EXPIRED') as ok`)).rows[0].ok;
+check('【0008】过期码校验返回 false', lExpired === false, `实际 ${lExpired}`);
+
+const lMissing = (await db.query(`select public.invite_code_is_valid('L-NOT-EXIST') as ok`)).rows[0].ok;
+check('【0008】不存在的码返回 false', lMissing === false, `实际 ${lMissing}`);
+
+//  聊天窗口复制来的码常带前后空格、也可能被输入法转成小写。
+//  归一化只在数据库这一层做一次，前后端就不会各写一套然后漂移。
+const lNormalized = (await db.query(`select public.invite_code_is_valid('  l-test-one  ') as ok`)).rows[0].ok;
+check('【0008】前后空格 + 小写会被归一化', lNormalized === true, `实际 ${lNormalized}`);
+
+const lUse1 = (await db.query(`select public.consume_invite_code('L-TEST-ONE') as ok`)).rows[0].ok;
+check('【0008】消耗 max_uses=1 的码成功', lUse1 === true, `实际 ${lUse1}`);
+
+const lUse2 = (await db.query(`select public.consume_invite_code('L-TEST-ONE') as ok`)).rows[0].ok;
+check('【0008】同一个码再消耗一次失败（已用尽）', lUse2 === false, `实际 ${lUse2}`);
+
+const lAfterUse = (await db.query(`select public.invite_code_is_valid('L-TEST-ONE') as ok`)).rows[0].ok;
+check('【0008】用尽后校验也说不可用（前端不会放行一个扣不掉的码）', lAfterUse === false, `实际 ${lAfterUse}`);
+
+const lUseExpired = (await db.query(`select public.consume_invite_code('L-TEST-EXPIRED') as ok`)).rows[0].ok;
+check('【0008】过期码不能被消耗', lUseExpired === false, `实际 ${lUseExpired}`);
+
+for (let i = 0; i < 3; i += 1) {
+  await db.query(`select public.consume_invite_code('L-TEST-MANY')`);
+}
+// 读 used_count 必须回到 admin —— 上面那些 consume 是 anon 调的就是要证明
+// 「函数能改表，而调用者自己没有表权限」，这正是 SECURITY DEFINER 的意义。
+await actAsAdmin();
+const lUsed = (await db.query(`select used_count from public.invite_codes where code='L-TEST-MANY'`)).rows[0]
+  .used_count;
+check('【0008】max_uses=3 的码恰好扣满 3 次（不多不少）', Number(lUsed) === 3, `实际 ${lUsed}`);
+
+const lOver = (await db.query(`select public.consume_invite_code('L-TEST-MANY') as ok`)).rows[0].ok;
+check('【0008】越过上限后再扣返回 false（计数器不会涨到 4）', lOver === false, `实际 ${lOver}`);
+
+await actAsAnon();
+
+//  ── 安全边界：函数可用，表不可读 ──────────────────────────────────────
+//  真实 Supabase 上 anon 手里有表级 GRANT，靠的是「RLS 开启 + 零策略」
+//  把它挡成 0 行；本地 replica 里则直接是 permission denied。
+//  两种情况都算通过 —— 要证明的是「读不到」，不是「用哪种方式读不到」。
+let lRows = null;
+let lErr = null;
+try {
+  lRows = (await db.query(`select code, note from public.invite_codes`)).rows;
+} catch (e) {
+  lErr = e.message;
+}
+check(
+  '【0008】anon 直接读 invite_codes 被挡住（函数可用 ≠ 表可读）',
+  lErr !== null || lRows.length === 0,
+  lErr ?? `居然读到了 ${lRows.length} 行`,
+);
+
+await actAsAdmin();
+
+const lDef = (
+  await db.query(
+    `select p.proname, p.prosecdef, coalesce(p.proconfig, '{}') as proconfig
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.proname in ('invite_code_is_valid','consume_invite_code')
+      order by p.proname`,
+  )
+).rows;
+check(
+  '【0008】两个函数都是 SECURITY DEFINER（否则 anon 会被 RLS 挡死）',
+  lDef.length === 2 && lDef.every((r) => r.prosecdef === true),
+  `实际 ${JSON.stringify(lDef.map((r) => [r.proname, r.prosecdef]))}`,
+);
+check(
+  '【0008】两个函数的 search_path 都钉死了（防同名对象提权）',
+  lDef.length === 2 && lDef.every((r) => r.proconfig.some((c) => c.startsWith('search_path='))),
+  `实际 ${JSON.stringify(lDef.map((r) => [r.proname, r.proconfig]))}`,
+);
 
 // ═══════════════════════════════════════════════════════════════════════
 //  结果

@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 
 import { createSupabaseServerClient, isSupabaseConfigured } from '@/lib/supabase';
 import { isDevUserActive } from '@/lib/auth';
+import { INVITE_REQUIRED, normalizeInviteCode } from '@/lib/invite';
 
 /* LoginState 与 LOGIN_INITIAL 都在 ./state.ts。
  * 不能写在这个文件里 —— 'use server' 文件只允许导出 async 函数，
@@ -75,11 +76,60 @@ function notConfiguredState(): LoginState {
       };
 }
 
-/** 发送登录链接。配合客户端的 useActionState 使用。 */
+/** 发信失败时该说什么。抽出来是因为下面的流程有两条发信路径。 */
+function sendErrorState(error: { code?: string; message: string }): LoginState {
+  console.error('[sendMagicLink]', error.message);
+
+  /* 发信频率限制必须说清楚。
+   * Supabase 自带发信服务对同一个邮箱有硬性间隔，撞上时回 429。这里如果
+   * 还说「稍后再试」，用户会以为坏了、反复点，反而把窗口越推越远 ——
+   * 实测连点三次能让接下来一小时谁都进不来。
+   * 顺带记一笔：`admin/generate_link` 也吃同一个计数，排障时别拿它猛试，
+   * 会把正常用户要用的额度提前烧掉。 */
+  if (error.code === 'over_email_send_rate_limit') {
+    return {
+      status: 'error',
+      message:
+        '发信太频繁了 —— 同一个邮箱有硬性间隔，等一分钟再点。急的话直接切到「密码」登录。',
+    };
+  }
+  return { status: 'error', message: '发送失败，稍后再试一次。' };
+}
+
+function sentState(email: string): LoginState {
+  return {
+    status: 'sent',
+    message: `登录链接已发到 ${email}。去邮箱点开它就能进——链接只能用一次，15 分钟内有效。`,
+  };
+}
+
+/** 发送登录链接。配合客户端的 useActionState 使用。
+ *
+ * 邀请码门槛落在这里，三步走：
+ *
+ *   1. 先按「只给已有账号发信」（shouldCreateUser: false）试一次。
+ *      这一步同时办两件事：发信，以及回答「这个邮箱注册过没有」——
+ *      GoTrue 对未注册的邮箱回 otp_disabled，而不是发信。
+ *      所以它既不需要额外的查询接口，也不会多消耗一次发信额度。
+ *   2. 未注册 → 必须有一个仍然有效的邀请码，否则把话说明白，让人去找码。
+ *   3. 有效 → 才允许建号（shouldCreateUser: true）并真的发信。
+ *
+ * 为什么先发信、后扣码，而不是先扣后发：
+ *   扣在发信之前的话，一旦发信撞上频率限制（429），码就白烧一次 ——
+ *   而朋友连点三次「发登录链接」正是最可能触发限流的场景，三个码就这么没了。
+ *   反过来「校验通过后被别人抢先扣光」的窗口只有几百毫秒，
+ *   而这个码只经我一个人的手发给一两个人。两种风险不对等，取小的那个。
+ *
+ * 一个诚实的副作用：**邀请码门槛必然暴露「某个邮箱注册过没有」**。
+ *   没开门槛时所有失败都笼统成「发送失败」，那是不想提供账号枚举接口；
+ *   但现在未注册的用户必须被告知「你需要一个码」，否则他只会反复重试、
+ *   永远猜不到为什么收不到信。两害相权，选说得清楚。
+ */
 export async function sendMagicLink(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const email = String(formData.get('email') ?? '')
     .trim()
     .toLowerCase();
+  const inviteCode = normalizeInviteCode(String(formData.get('inviteCode') ?? ''));
 
   if (!emailRe.test(email)) {
     return { status: 'error', message: '邮箱格式看起来不对，检查一下？' };
@@ -90,44 +140,59 @@ export async function sendMagicLink(_prev: LoginState, formData: FormData): Prom
   const supabase = await createSupabaseServerClient();
   const origin = await currentOrigin();
 
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      emailRedirectTo: `${origin}/auth/callback`,
-      /* shouldCreateUser: true —— 第一次用某个邮箱登录就自动注册。
-       * 这是一个有意的取舍：本项目要拉朋友一起用，如果关掉，
-       * 每次加人都得手动去 Supabase 后台建账号。
-       * 代价是「知道网址的人都能注册」。对 3 人自用工具可接受；
-       * 要收紧时把这里改成 false，并启用 schema 里已有的 invite_codes 表。 */
-      shouldCreateUser: true,
-    },
-  });
+  const send = (shouldCreateUser: boolean) =>
+    supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${origin}/auth/callback`, shouldCreateUser },
+    });
 
-  if (error) {
-    /* 错误原文只进服务端日志。回给用户的是笼统说法 ——
-     * 区分「这个邮箱不存在」和「发信失败」等于提供了一个账号枚举接口。 */
-    console.error('[sendMagicLink]', error.message);
+  /* 第一步：不建号，只给已有账号发信。
+   * 未注册的邮箱会在这里拿到 otp_disabled —— 这就是「要不要查邀请码」的分叉点。 */
+  const existing = await send(false);
 
-    /* 例外：发信频率限制要说清楚。
-     * Supabase 自带发信服务对同一个邮箱有硬性间隔，撞上时回 429。这里如果
-     * 还说「稍后再试」，用户会以为坏了、反复点，反而把窗口越推越远 ——
-     * 实测连点三次能让接下来一小时谁都进不来。
-     * 顺带记一笔：`admin/generate_link` 也吃同一个计数，排障时别拿它猛试，
-     * 会把正常用户要用的额度提前烧掉。 */
-    if (error.code === 'over_email_send_rate_limit') {
-      return {
-        status: 'error',
-        message:
-          '发信太频繁了 —— 同一个邮箱有硬性间隔，等一分钟再点。急的话直接切到「密码」登录。',
-      };
-    }
-    return { status: 'error', message: '发送失败，稍后再试一次。' };
+  if (!existing.error) return sentState(email);
+
+  if (existing.error.code !== 'otp_disabled') return sendErrorState(existing.error);
+
+  /* 走到这里说明：这个邮箱还没有账号。 */
+  if (!INVITE_REQUIRED) {
+    const created = await send(true);
+    return created.error ? sendErrorState(created.error) : sentState(email);
   }
 
-  return {
-    status: 'sent',
-    message: `登录链接已发到 ${email}。去邮箱点开它就能进——链接只能用一次，15 分钟内有效。`,
-  };
+  if (!inviteCode) {
+    return {
+      status: 'error',
+      message:
+        '这个邮箱还没有账号 —— 第一次进来需要一个邀请码，找拉你进来的那个人要一个。' +
+        '如果你本来以为自己已经有账号，先检查一下邮箱有没有打错。',
+    };
+  }
+
+  const { data: usable, error: checkError } = await supabase.rpc('invite_code_is_valid', {
+    p_code: inviteCode,
+  });
+
+  if (checkError) {
+    console.error('[sendMagicLink] 校验邀请码失败', checkError.message);
+    return { status: 'error', message: '校验邀请码时出错了，稍后再试一次。' };
+  }
+  if (!usable) {
+    return { status: 'error', message: '邀请码不对，或者已经过期、用完了 —— 找发码的人再要一个。' };
+  }
+
+  const created = await send(true);
+  if (created.error) return sendErrorState(created.error);
+
+  /* 信已经发出去了才扣码（理由见函数头）。
+   * 扣减失败不影响用户进门 —— 他已经收到信了，只是这一张票没被剪角，
+   * 所以这里只记日志，不报错。 */
+  const { error: consumeError } = await supabase.rpc('consume_invite_code', { p_code: inviteCode });
+  if (consumeError) {
+    console.error('[sendMagicLink] 邀请码扣减失败', inviteCode, consumeError.message);
+  }
+
+  return sentState(email);
 }
 
 /** 用邮箱 + 密码登录。

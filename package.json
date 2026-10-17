@@ -22,7 +22,7 @@
     "seed:build": "node scripts/build-seed.mjs",
     "seed:dev": "node scripts/seed-dev-data.mjs",
     "start": "next start",
-    "test": "node --test tests/nutrition.test.ts tests/portion.test.ts tests/calendar.test.ts tests/csv.test.ts",
+    "test": "node --test tests/nutrition.test.ts tests/portion.test.ts tests/calendar.test.ts tests/csv.test.ts tests/invite.test.ts",
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run actions:verify && npm run headers:verify && npm run db:verify",
     "actions:verify": "node tests/verify-server-actions.mjs",

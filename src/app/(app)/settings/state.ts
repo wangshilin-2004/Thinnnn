@@ -16,3 +16,19 @@ export type SettingsState = {
 };
 
 export const SETTINGS_INITIAL: SettingsState = { status: 'idle', message: '' };
+
+/* 邀请码卡片自己的状态。
+ *
+ * 为什么不复用 SettingsState：这个状态要多带一个字段 —— createdCode。
+ * 生成成功后要把码**大号显示出来**，因为用户下一步是复制它发给朋友，
+ * 只丢一句「已生成」藏在正文里等于让他去列表里再找一遍。
+ *
+ * 也不把码写进 message 里靠正则截出来 —— 那种「拼进字符串再解析」
+ * 的写法会在文案一改就静默失效。 */
+export type InviteState = {
+  status: 'idle' | 'ok' | 'error';
+  message: string;
+  createdCode?: string;
+};
+
+export const INVITE_INITIAL: InviteState = { status: 'idle', message: '' };

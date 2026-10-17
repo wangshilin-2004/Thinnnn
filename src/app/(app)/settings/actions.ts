@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 
 import { requireUser } from '@/lib/auth';
 import { EMAIL_RE } from '@/lib/email';
+import { normalizeInviteCode } from '@/lib/invite';
+import { createInviteCodeRecord, isInviteOwner, voidInviteCodeRow } from '@/lib/invite-admin';
 import { createSupabaseServerClient, isSupabaseConfigured } from '@/lib/supabase';
 
 /* 设置页的三个入口：改密码、改邮箱、退出登录。
@@ -19,7 +21,7 @@ import { createSupabaseServerClient, isSupabaseConfigured } from '@/lib/supabase
  * 这两个都是「部署完才发现」的问题，所以它们必须由应用自己解决，
  * 而不是指望用户去 Supabase 后台手动改。 */
 
-import type { SettingsState } from './state';
+import type { InviteState, SettingsState } from './state';
 
 /** Supabase 没配好时该说什么。
  * 和 src/app/login/actions.ts 里的 notConfiguredState 保持同一套说法 ——
@@ -130,4 +132,94 @@ export async function updateEmail(
     status: 'ok',
     message: `确认信已发到 ${email}。去那个邮箱点开链接，地址才算真的换过去。`,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * 邀请码管理（只有管理员看得到、点得动）
+ *
+ * 为什么放在设置页而不是单开一个 /admin：
+ *   管理面只有一个动作 —— 生成一个码、发给朋友。为它单开路由、单做导航，
+ *   是给一个一年用两三次的操作配了一套门面。放在设置页最底下，
+ *   「只有管理员渲染这一块」（见 page.tsx 的 isInviteOwner 判断），
+ *   普通用户根本看不到这段界面，也没法通过 URL 直接访问 ——
+ *   因为它在同一页里，不存在「隐藏路由被打」这种情况。
+ *
+ * 为什么两个 action 都要重新校验 isInviteOwner：
+ *   界面上「看不见」不是安全边界。Server Action 是一个可以被直接调用的
+ *   HTTP 端点，所以每个入口都必须自己确认一次身份 —— 不能依赖
+ *   「页面上没渲染按钮」。
+ * ------------------------------------------------------------------ */
+
+const MAX_USES_RANGE = [1, 50] as const;
+const DAYS_RANGE = [1, 3650] as const;
+
+function inRange(value: number, [min, max]: readonly [number, number]): boolean {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+export async function createInviteCodeAction(
+  _prev: InviteState,
+  formData: FormData,
+): Promise<InviteState> {
+  const user = await requireUser();
+  if (!isInviteOwner(user.email)) {
+    return { status: 'error', message: '只有管理员能生成邀请码。' };
+  }
+
+  const note = String(formData.get('note') ?? '')
+    .trim()
+    .slice(0, 40);
+  const maxUses = Number(formData.get('maxUses') ?? 1);
+  const days = Number(formData.get('days') ?? 30);
+
+  if (!inRange(maxUses, MAX_USES_RANGE)) {
+    return { status: 'error', message: '可用次数要在 1–50 之间。' };
+  }
+  if (!inRange(days, DAYS_RANGE)) {
+    return { status: 'error', message: '有效天数要在 1–3650 之间。' };
+  }
+
+  try {
+    const created = await createInviteCodeRecord({
+      note: note.length > 0 ? note : null,
+      maxUses,
+      days,
+    });
+
+    /* 生成成功后要让页面重新渲染一次，否则列表里看不到新码
+         （Server Action 的返回值只更新表单自己的状态，不会自动刷新兄弟节点）。 */
+    revalidatePath('/settings');
+
+    return {
+      status: 'ok',
+      message: `新码：${created.code} —— 已经复制好，直接粘给朋友。`,
+      createdCode: created.code,
+    };
+  } catch (error) {
+    console.error('[createInviteCode]', error);
+    return { status: 'error', message: '生成失败，稍后再试一次。' };
+  }
+}
+
+export async function voidInviteCodeAction(
+  _prev: InviteState,
+  formData: FormData,
+): Promise<InviteState> {
+  const user = await requireUser();
+  if (!isInviteOwner(user.email)) {
+    return { status: 'error', message: '只有管理员能作废邀请码。' };
+  }
+
+  const code = normalizeInviteCode(String(formData.get('code') ?? ''));
+  if (!code) return { status: 'error', message: '没收到要作废的码。' };
+
+  try {
+    const found = await voidInviteCodeRow(code);
+    if (!found) return { status: 'error', message: '没有这个码，可能已经被删了。' };
+    revalidatePath('/settings');
+    return { status: 'ok', message: `${code} 已作废 —— 它现在不能用来注册了。` };
+  } catch (error) {
+    console.error('[voidInviteCode]', error);
+    return { status: 'error', message: '作废失败，稍后再试一次。' };
+  }
 }
