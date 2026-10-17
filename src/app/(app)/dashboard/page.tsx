@@ -7,6 +7,7 @@ import { WeightLogger } from '@/components/weight-logger';
 import { WeightTrend } from '@/components/weight-trend';
 import { getDailySummaries, getMealsForDate, getProfile, getWeightSeries, MEAL_LABELS } from '@/db/queries';
 import { requireUser } from '@/lib/auth';
+import { formatCnDate } from '@/lib/calendar';
 import { addDays, analyzeTrend, DISCLAIMER, movingAverage, todayInTimezone } from '@/lib/nutrition';
 import { portionText } from '@/lib/portion';
 
@@ -81,7 +82,7 @@ export default async function DashboardPage() {
       <SiteHeader />
       <main className="content-max flex flex-col gap-6 py-6 pb-safe-nav sm:gap-8 sm:py-10">
         <header className="flex flex-col gap-1">
-          <p className="text-subhead text-ink-3">{formatCn(today)}</p>
+          <p className="text-subhead text-ink-3">{formatCnDate(today)}</p>
           <h1 className="text-title-1 font-semibold tracking-title text-ink">今天</h1>
         </header>
 
@@ -243,12 +244,4 @@ function Stat({ label, value, unit }: { label: string; value: number | null; uni
       </span>
     </div>
   );
-}
-
-function formatCn(date: string): string {
-  const [y, m, d] = date.split('-').map(Number);
-  const week = ['日', '一', '二', '三', '四', '五', '六'][
-    new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay()
-  ];
-  return `${y} 年 ${m} 月 ${d} 日 · 周${week}`;
 }

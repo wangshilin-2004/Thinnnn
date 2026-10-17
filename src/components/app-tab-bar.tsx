@@ -47,6 +47,17 @@ const TABS = [
     ),
   },
   {
+    href: '/history',
+    label: '回顾',
+    icon: (
+      <>
+        <rect x="3.5" y="5" width="17" height="15.5" rx="3.2" />
+        <path d="M3.5 9.6h17" />
+        <path d="M8 3.2v3.4M16 3.2v3.4" />
+      </>
+    ),
+  },
+  {
     href: '/trends',
     label: '趋势',
     icon: (
@@ -71,7 +82,7 @@ export function AppTabBar() {
           /* startsWith 而不是 ===：/log/meal 下将来可能有 /log/meal/xxx
            * 子页面，那时标签仍然该高亮。
            * 这里本来还写了 `tab.href !== '/'` 来防止根路径匹配一切，但 TABS 是
-           * `as const`，href 的类型是字面量联合 '"/dashboard" | "/log/meal" | "/trends"'，
+           * `as const`，href 的类型是字面量联合（'/dashboard' | '/log/meal' | …），
            * 根本不含 '/' —— TS 直接把这个判断报成「不可能成立」。字面量联合的好处：
            * 手滑写错路径会当场编译失败，而不是上线后才发现标签永远不高亮。 */
           const active =

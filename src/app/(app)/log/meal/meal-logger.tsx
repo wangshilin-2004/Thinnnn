@@ -110,7 +110,8 @@ export function MealLogger({
   catalog,
   recent,
   todaysMeals,
-  today,
+  logDate,
+  isToday,
   defaultMealType,
   mealLabels,
   targetKcal,
@@ -118,7 +119,10 @@ export function MealLogger({
   catalog: PickerFood[];
   recent: RecentFood[];
   todaysMeals: MealItem[];
-  today: string;
+  /** 正在记哪一天。默认是今天，从「回顾」进来时会是过去的某天。 */
+  logDate: string;
+  /** 是不是今天。只影响文案（「今天已记」还是「这天已记」）。 */
+  isToday: boolean;
   defaultMealType: MealType;
   mealLabels: Record<MealType, string>;
   targetKcal: number | null;
@@ -237,7 +241,7 @@ export function MealLogger({
         },
       });
 
-      const res = await addMealItem({ foodId: food.id, mealType, logDate: today });
+      const res = await addMealItem({ foodId: food.id, mealType, logDate });
       if (res.ok) {
         setFlash(`${res.item.foodName} · ${res.item.kcal} kcal 已记录`);
         window.setTimeout(() => setFlash(null), 2400);
@@ -309,7 +313,8 @@ export function MealLogger({
       {/* ── 今日进度 ─────────────────────────────────────────── */}
       <div className="flex items-baseline justify-between">
         <span className="text-footnote text-ink-3">
-          今天已记 {Math.round(eatenToday).toLocaleString('zh-CN')} kcal
+          {isToday ? '今天' : '这天'}已记{' '}
+          {Math.round(eatenToday).toLocaleString('zh-CN')} kcal
         </span>
         {remaining !== null && (
           <span className="text-footnote text-ink-3">
@@ -495,10 +500,12 @@ export function MealLogger({
         </>
       ) : null}
 
-      {/* ── 今天已记录 ───────────────────────────────────────── */}
+      {/* ── 已记录 ───────────────────────────────────────────── */}
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="text-footnote text-ink-3">今天已记录</h2>
+          <h2 className="text-footnote text-ink-3">
+            {isToday ? '今天' : '这天'}已记录
+          </h2>
           {/* 触控区同样用伪元素扩到 44px：这是个 20px 高的文字链接，
               在手机上点起来很容易打偏。 */}
           <Link
