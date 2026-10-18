@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 
 import { withUser } from '@/db';
 import {
@@ -12,6 +12,9 @@ import {
   measurements,
   profiles,
   strengthEntries,
+  workoutExercises,
+  workoutSessions,
+  workoutSets,
 } from '@/db/schema';
 
 /* 业务查询层。
@@ -721,5 +724,120 @@ export async function getFriendIntakeByDay(viewerId: string, peerId: string, fro
     const byDay = new Map<string, number>();
     for (const r of rows) byDay.set(r.date, (byDay.get(r.date) ?? 0) + num(r.kcal));
     return byDay;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  训练会话（进行中的一次训练）
+// ═══════════════════════════════════════════════════════════════════════
+
+export type SessionSet = {
+  id: string;
+  setIndex: number;
+  weightKg: number | null;
+  reps: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type SessionExercise = {
+  id: string;
+  exerciseId: string;
+  exerciseName: string;
+  position: number;
+  targetSets: number;
+  targetReps: number;
+  restSeconds: number;
+  sets: SessionSet[];
+};
+
+export type SessionDetail = {
+  id: string;
+  logDate: string;
+  part: string;
+  title: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  exercises: SessionExercise[];
+};
+
+export async function getActiveSession(
+  userId: string,
+  date: string,
+): Promise<{ id: string } | null> {
+  return withUser(userId, async (tx) => {
+    const [row] = await tx
+      .select({ id: workoutSessions.id })
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.userId, userId),
+          eq(workoutSessions.logDate, date),
+          isNull(workoutSessions.finishedAt),
+        ),
+      )
+      .orderBy(desc(workoutSessions.startedAt))
+      .limit(1);
+    return row ?? null;
+  });
+}
+
+export async function getSessionDetail(
+  userId: string,
+  sessionId: string,
+): Promise<SessionDetail | null> {
+  return withUser(userId, async (tx) => {
+    const [head] = await tx
+      .select()
+      .from(workoutSessions)
+      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)));
+    if (!head) return null;
+
+    const exRows = await tx
+      .select()
+      .from(workoutExercises)
+      .where(eq(workoutExercises.sessionId, sessionId))
+      .orderBy(asc(workoutExercises.position));
+
+    const setRows = exRows.length
+      ? await tx
+          .select()
+          .from(workoutSets)
+          .where(
+            inArray(
+              workoutSets.sessionExerciseId,
+              exRows.map((e) => e.id),
+            ),
+          )
+          .orderBy(asc(workoutSets.setIndex))
+      : [];
+
+    return {
+      id: head.id,
+      logDate: head.logDate,
+      part: head.part,
+      title: head.title,
+      startedAt: head.startedAt.toISOString(),
+      finishedAt: head.finishedAt ? head.finishedAt.toISOString() : null,
+      exercises: exRows.map((e) => ({
+        id: e.id,
+        exerciseId: e.exerciseId,
+        exerciseName: e.exerciseName,
+        position: e.position,
+        targetSets: e.targetSets,
+        targetReps: e.targetReps,
+        restSeconds: e.restSeconds,
+        sets: setRows
+          .filter((r) => r.sessionExerciseId === e.id)
+          .map((r) => ({
+            id: r.id,
+            setIndex: r.setIndex,
+            weightKg: numOrNull(r.weightKg),
+            reps: r.reps,
+            startedAt: r.startedAt ? r.startedAt.toISOString() : null,
+            finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
+          })),
+      })),
+    };
   });
 }

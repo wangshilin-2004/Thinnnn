@@ -2,11 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { SiteHeader } from '@/components/site-header';
-import { getCardioForDate, getFitnessSince, getStrengthForDate } from '@/db/queries';
+import { getActiveSession, getCardioForDate, getFitnessSince, getStrengthForDate } from '@/db/queries';
 import { requireUser } from '@/lib/auth';
 import { formatCnDate } from '@/lib/calendar';
 import { addDays, todayInTimezone } from '@/lib/nutrition';
-import { deleteCardio, deleteStrength } from './actions';
+import { deleteCardio, deleteStrength, startSession } from './actions';
 
 export const metadata: Metadata = { title: '训练' };
 
@@ -29,6 +29,7 @@ export default async function FitnessPage({
 }) {
   const user = await requireUser();
   const today = todayInTimezone(user.timezone);
+  const active = await getActiveSession(user.id, today);
   const { saved } = await searchParams;
 
   const [cardio, strength, recent] = await Promise.all([
@@ -112,6 +113,37 @@ export default async function FitnessPage({
 
         {/* 今日明细 */}
         <section className="flex flex-col gap-space-3">
+          {active ? (
+            <Link
+              href={`/fitness/session/${active.id}`}
+              className="glass flex items-center justify-between rounded-md p-space-4"
+            >
+              <span className="text-subhead font-semibold text-ink">有一场训练没结束 · 继续</span>
+              <span className="text-brand-text">→</span>
+            </Link>
+          ) : (
+            <form action={startSession} className="glass rounded-md p-space-4">
+              <input type="hidden" name="logDate" value={today} />
+              <p className="text-subhead font-semibold text-ink">开始一场训练</p>
+              <p className="mt-space-1 text-footnote text-ink-3">
+                选今天练哪儿 —— 进去之后排动作、按组计时，练完自动记进今天的训练记录。
+              </p>
+              <div className="mt-space-3 grid grid-cols-4 gap-space-2">
+                {(['胸', '肩', '背', '腿'] as const).map((part) => (
+                  <button
+                    key={part}
+                    type="submit"
+                    name="part"
+                    value={part}
+                    className="touch-target rounded-md border border-separator bg-sunken py-space-3 text-subhead font-semibold text-ink"
+                  >
+                    {part}
+                  </button>
+                ))}
+              </div>
+            </form>
+          )}
+
           <h2 className="text-headline font-semibold text-ink">今天的训练</h2>
 
           {empty ? (

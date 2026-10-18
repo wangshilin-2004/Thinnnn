@@ -690,3 +690,65 @@ export type NewStrengthEntry = typeof strengthEntries.$inferInsert;
 
 export type Friendship = typeof friendships.$inferSelect;
 export type NewFriendship = typeof friendships.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════
+//  11. 训练会话（进行中的一次训练）
+//
+//  与 strength_entries 的区别：那边是「练完之后的事后记录」，
+//  这里是「正在练」的过程 —— 计划中的组数、每一组真实的起止时刻。
+//  取消训练时整条删掉，不在历史里留痕。
+// ═══════════════════════════════════════════════════════════════════════
+
+export const workoutSessions = pgTable(
+  'workout_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    logDate: date('log_date', { mode: 'string' }).notNull(),
+    part: text('part').notNull(),
+    title: text('title'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('workout_sessions_user_date_idx').on(t.userId, t.logDate.desc())],
+);
+
+export const workoutExercises = pgTable(
+  'workout_exercises',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id').notNull(),
+    exerciseId: text('exercise_id').notNull(),
+    exerciseName: text('exercise_name').notNull(),
+    position: integer('position').notNull(),
+    targetSets: integer('target_sets').notNull().default(3),
+    targetReps: integer('target_reps').notNull().default(10),
+    restSeconds: integer('rest_seconds').notNull().default(120),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('workout_exercises_session_position_uniq').on(t.sessionId, t.position)],
+);
+
+export const workoutSets = pgTable(
+  'workout_sets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionExerciseId: uuid('session_exercise_id').notNull(),
+    setIndex: integer('set_index').notNull(),
+    weightKg: numeric('weight_kg', { precision: 6, scale: 2 }),
+    reps: integer('reps'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('workout_sets_exercise_index_uniq').on(t.sessionExerciseId, t.setIndex)],
+);
+
+export type WorkoutSession = typeof workoutSessions.$inferSelect;
+export type NewWorkoutSession = typeof workoutSessions.$inferInsert;
+export type WorkoutExercise = typeof workoutExercises.$inferSelect;
+export type NewWorkoutExercise = typeof workoutExercises.$inferInsert;
+export type WorkoutSet = typeof workoutSets.$inferSelect;
+export type NewWorkoutSet = typeof workoutSets.$inferInsert;

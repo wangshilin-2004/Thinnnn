@@ -2,11 +2,11 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { withUser } from '@/db';
-import { cardioSessions, strengthEntries } from '@/db/schema';
+import { cardioSessions, strengthEntries, workoutExercises, workoutSessions, workoutSets } from '@/db/schema';
 import { requireUser } from '@/lib/auth';
 import { findCardio, findExercise } from '@/content/exercises';
 
@@ -158,6 +158,209 @@ export async function deleteStrength(formData: FormData): Promise<void> {
       .where(and(eq(strengthEntries.id, id.data), eq(strengthEntries.userId, user.id)));
   });
 
+  revalidatePath('/fitness');
+  redirect('/fitness');
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ *  训练会话：开始 → 排动作 → 每组计时 → 结束
+ *
+ *  为什么结束时要写一份 strength_entries：
+ *    「这周练了几次、多少组」这些统计、CSV 导出、好友页读的都是
+ *    strength_entries。会话是过程，strength_entries 是结果 ——
+ *    结束时把结果落一份，其它地方就不用知道「会话」这个概念。
+ * ───────────────────────────────────────────────────────────────────── */
+
+const PART_OPTION = z.enum(['胸', '肩', '背', '腿', '全身']);
+
+export async function startSession(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const parsed = z
+    .object({
+      part: PART_OPTION,
+      logDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    })
+    .safeParse({ part: formData.get('part'), logDate: formData.get('logDate') });
+  if (!parsed.success) redirect('/fitness?error=1');
+
+  const id = await withUser(user.id, async (tx) => {
+    const [row] = await tx
+      .insert(workoutSessions)
+      .values({ userId: user.id, logDate: parsed.data.logDate, part: parsed.data.part })
+      .returning({ id: workoutSessions.id });
+    return row.id;
+  });
+  revalidatePath('/fitness');
+  redirect(`/fitness/session/${id}`);
+}
+
+const exerciseInput = z.object({
+  sessionId: z.string().uuid(),
+  exerciseId: z.string().trim().min(1).max(80),
+  targetSets: z.coerce.number().int().min(1).max(20),
+  targetReps: z.coerce.number().int().min(1).max(100),
+  restSeconds: z.coerce.number().int().min(15).max(900),
+});
+
+export async function addSessionExercise(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const parsed = exerciseInput.safeParse({
+    sessionId: formData.get('sessionId'),
+    exerciseId: formData.get('exerciseId'),
+    targetSets: formData.get('targetSets'),
+    targetReps: formData.get('targetReps'),
+    restSeconds: formData.get('restSeconds'),
+  });
+  if (!parsed.success) redirect('/fitness?error=1');
+
+  const exercise = findExercise(parsed.data.exerciseId);
+  if (!exercise) redirect('/fitness?error=1');
+
+  await withUser(user.id, async (tx) => {
+    const [head] = await tx
+      .select({ id: workoutSessions.id })
+      .from(workoutSessions)
+      .where(eq(workoutSessions.id, parsed.data.sessionId));
+    if (!head) return;
+
+    const [{ next }] = await tx
+      .select({ next: sql<number>`coalesce(max(${workoutExercises.position}) + 1, 0)` })
+      .from(workoutExercises)
+      .where(eq(workoutExercises.sessionId, parsed.data.sessionId));
+
+    await tx.insert(workoutExercises).values({
+      sessionId: parsed.data.sessionId,
+      exerciseId: exercise.id,
+      exerciseName: exercise.name,
+      position: next,
+      targetSets: parsed.data.targetSets,
+      targetReps: parsed.data.targetReps,
+      restSeconds: parsed.data.restSeconds,
+    });
+  });
+  revalidatePath(`/fitness/session/${parsed.data.sessionId}`);
+}
+
+export async function removeSessionExercise(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const sessionId = String(formData.get('sessionId') ?? '');
+  const exerciseRowId = String(formData.get('exerciseRowId') ?? '');
+  if (!sessionId || !exerciseRowId) redirect('/fitness?error=1');
+
+  await withUser(user.id, async (tx) => {
+    await tx.delete(workoutExercises).where(eq(workoutExercises.id, exerciseRowId));
+  });
+  revalidatePath(`/fitness/session/${sessionId}`);
+}
+
+const setInput = z.object({
+  sessionId: z.string().uuid(),
+  exerciseRowId: z.string().uuid(),
+  setIndex: z.coerce.number().int().min(1).max(20),
+  weightKg: z
+    .union([z.literal(''), z.coerce.number().min(0).max(500)])
+    .transform((v) => (v === '' ? null : v)),
+  reps: z.union([z.literal(''), z.coerce.number().int().min(1).max(200)]).transform((v) => (v === '' ? null : v)),
+});
+
+export async function finishSet(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const parsed = setInput.safeParse({
+    sessionId: formData.get('sessionId'),
+    exerciseRowId: formData.get('exerciseRowId'),
+    setIndex: formData.get('setIndex'),
+    weightKg: formData.get('weightKg'),
+    reps: formData.get('reps'),
+  });
+  if (!parsed.success) redirect('/fitness?error=1');
+
+  await withUser(user.id, async (tx) => {
+    const now = new Date();
+    const [existing] = await tx
+      .select({ id: workoutSets.id })
+      .from(workoutSets)
+      .where(
+        and(
+          eq(workoutSets.sessionExerciseId, parsed.data.exerciseRowId),
+          eq(workoutSets.setIndex, parsed.data.setIndex),
+        ),
+      );
+    if (existing) {
+      await tx
+        .update(workoutSets)
+        .set({ weightKg: parsed.data.weightKg?.toString() ?? null, reps: parsed.data.reps, finishedAt: now })
+        .where(eq(workoutSets.id, existing.id));
+    } else {
+      await tx.insert(workoutSets).values({
+        sessionExerciseId: parsed.data.exerciseRowId,
+        setIndex: parsed.data.setIndex,
+        weightKg: parsed.data.weightKg?.toString() ?? null,
+        reps: parsed.data.reps,
+        startedAt: now,
+        finishedAt: now,
+      });
+    }
+  });
+  revalidatePath(`/fitness/session/${parsed.data.sessionId}`);
+  // 带上 rest=<动作行 id> 回同页：页面据此挂上组间计时器。
+  // 组间时长存在动作行上（每个人每个动作可以不一样），所以要把行 id 带回来。
+  redirect(`/fitness/session/${parsed.data.sessionId}?rest=${parsed.data.exerciseRowId}`);
+}
+
+export async function finishSession(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const sessionId = String(formData.get('sessionId') ?? '');
+  if (!sessionId) redirect('/fitness?error=1');
+
+  await withUser(user.id, async (tx) => {
+    const [head] = await tx
+      .select()
+      .from(workoutSessions)
+      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, user.id)));
+    if (!head || head.finishedAt) return;
+
+    const exRows = await tx.select().from(workoutExercises).where(eq(workoutExercises.sessionId, sessionId));
+    const setRows = exRows.length
+      ? await tx
+          .select()
+          .from(workoutSets)
+          .where(inArray(workoutSets.sessionExerciseId, exRows.map((e) => e.id)))
+      : [];
+
+    // 只把「真的做了的组」写成结果；排了计划但没做的动作不留痕
+    for (const ex of exRows) {
+      const done = setRows.filter((s) => s.sessionExerciseId === ex.id && s.finishedAt);
+      if (!done.length) continue;
+      const heaviest = done.reduce<number | null>((max, s) => {
+        const w = Number(s.weightKg ?? 0);
+        return w > 0 && (max === null || w > max) ? w : max;
+      }, null);
+      const repSum = done.reduce((sum, s) => sum + (s.reps ?? ex.targetReps), 0);
+      await tx.insert(strengthEntries).values({
+        userId: user.id,
+        logDate: head.logDate,
+        exerciseId: ex.exerciseId,
+        exerciseName: ex.exerciseName,
+        part: head.part === '全身' ? '腿' : head.part,
+        sets: done.length,
+        reps: Math.max(1, Math.round(repSum / done.length)),
+        weightKg: heaviest === null ? null : heaviest.toString(),
+      });
+    }
+
+    await tx.update(workoutSessions).set({ finishedAt: new Date() }).where(eq(workoutSessions.id, sessionId));
+  });
+  revalidatePath('/fitness');
+  redirect('/fitness?saved=1');
+}
+
+export async function cancelSession(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const sessionId = String(formData.get('sessionId') ?? '');
+  if (!sessionId) redirect('/fitness?error=1');
+  await withUser(user.id, async (tx) => {
+    await tx.delete(workoutSessions).where(eq(workoutSessions.id, sessionId));
+  });
   revalidatePath('/fitness');
   redirect('/fitness');
 }

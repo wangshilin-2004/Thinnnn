@@ -121,6 +121,7 @@ const statements0007 = runMigration('0007_fix_account_deletion.sql');
 const statements0008 = runMigration('0008_invite_codes_consume.sql');
 const statements0009 = runMigration('0009_fitness_tables.sql');
 const statements0010 = runMigration('0010_username_and_friends.sql');
+const statements0011 = runMigration('0011_workout_sessions.sql');
 
 let migrationError = null;
 try {
@@ -156,12 +157,15 @@ try {
 
   for (const stmt of statements0010) await db.exec(stmt);
   console.log(`  · 0010_username_and_friends.sql 执行完成（${statements0010.length} 条语句）`);
+
+  for (const stmt of statements0011) await db.exec(stmt);
+  console.log(`  · 0011_workout_sessions.sql 执行完成（${statements0011.length} 条语句）`);
 } catch (e) {
   migrationError = e;
 }
 
 check(
-  '十个迁移文件都能在真 Postgres 上按序跑通',
+  '十一个迁移文件都能在真 Postgres 上按序跑通',
   migrationError === null,
   migrationError ? `${migrationError.message}` : '',
 );
@@ -222,23 +226,24 @@ const EXPECTED_FK_TABLES = [
   'measurements',
   'profiles',
   'strength_entries',
+  'workout_sessions', // 迁移 0011：一次训练会话（0011 另两个外键指向父表，不计在内）
 ];
 check(
-  `8 个指向 auth.users 的外键存在（实际 ${fkRows.length} 个）`,
+  `11 个指向 auth.users 的外键存在（实际 ${fkRows.length} 个）`,
   EXPECTED_FK_TABLES.every((t) => fkTables.includes(t)),
   `缺少：${EXPECTED_FK_TABLES.filter((t) => !fkTables.includes(t)).join(', ')}`,
 );
 
 check(
   '外键都是 ON DELETE CASCADE（删账号时数据跟着清）',
-  // 10 = 上表 8 张各 1 个 + friendships 的 requester_id/addressee_id 两个
-  fkRows.length === 10 &&
+  // 11 = 上表 9 张各 1 个 + friendships 的 requester_id/addressee_id 两个
+  fkRows.length === 11 &&
     (
       await db.query(`
         select count(*)::int c from pg_constraint
         where contype='f' and confrelid='auth.users'::regclass and confdeltype='c'
       `)
-    ).rows[0].c === 10,
+    ).rows[0].c === 11,
   `实际 ${fkRows.length} 个`,
 );
 
@@ -1044,6 +1049,9 @@ await db.exec(`
   grant select, insert, update, delete on public.cardio_sessions  to authenticated;
   grant select, insert, update, delete on public.strength_entries to authenticated;
   grant select, insert, update, delete on public.friendships    to authenticated;
+  grant select, insert, update, delete on public.workout_sessions  to authenticated;
+  grant select, insert, update, delete on public.workout_exercises to authenticated;
+  grant select, insert, update, delete on public.workout_sets      to authenticated;
   grant execute on function public.invite_code_is_valid(text)   to anon, authenticated;
   grant execute on function public.consume_invite_code(text)    to authenticated;
   grant execute on function public.is_friend_of(uuid, uuid)     to authenticated;
@@ -1855,6 +1863,94 @@ const leftFriends = (
   )
 ).rows[0].n;
 check('【0010】删账号时好友关系跟着级联删除（不留孤儿行）', leftFriends === 0, String(leftFriends));
+}
+
+{
+// ── 【0011】训练会话 ────────────────────────────────────────────────
+const w1 = (await db.query(`insert into auth.users (email) values ('w1@test.com') returning id`)).rows[0].id;
+const w2 = (await db.query(`insert into auth.users (email) values ('w2@test.com') returning id`)).rows[0].id;
+
+const myReject = async (label, sql, params = []) => {
+  try {
+    await db.query(sql, params);
+    check(label, false, '竟然成功了');
+  } catch {
+    check(label, true);
+  }
+};
+
+
+await actAs(w1);
+const sessId = (
+  await db.query(
+    `insert into public.workout_sessions (user_id, log_date, part) values ($1, current_date, '背') returning id`,
+    [w1],
+  )
+).rows[0]?.id;
+check('【0011】用户能开一次训练（部位 = 背）', Boolean(sessId));
+
+await myReject(
+  '【0011】部位只能是 胸/肩/背/腿/全身',
+  `insert into public.workout_sessions (user_id, log_date, part) values ($1, current_date, '手臂')`,
+  [w1],
+);
+
+const wexId = (
+  await db.query(
+    `insert into public.workout_exercises (session_id, exercise_id, exercise_name, position, target_sets, target_reps, rest_seconds)
+     values ($1, 'Barbell_Deadlift', '杠铃硬拉', 0, 4, 8, 180) returning id`,
+    [sessId],
+  )
+).rows[0]?.id;
+check('【0011】能往会话里排动作（4 组 × 8 次、组间 180 秒）', Boolean(wexId));
+
+await myReject(
+  '【0011】同一个会话里位置不能重复',
+  `insert into public.workout_exercises (session_id, exercise_id, exercise_name, position) values ($1,'Pullups','引体向上',0)`,
+  [sessId],
+);
+
+await db.query(
+  `insert into public.workout_sets (session_exercise_id, set_index, weight_kg, reps) values ($1, 1, 60, 8)`,
+  [wexId],
+);
+const setCount = (await db.query(`select count(*)::int n from public.workout_sets`)).rows[0].n;
+check('【0011】能记下某一组的重量和次数', setCount === 1, String(setCount));
+
+await myReject(
+  '【0011】组的序号从 1 开始',
+  `insert into public.workout_sets (session_exercise_id, set_index) values ($1, 0)`,
+  [wexId],
+);
+await myReject(
+  '【0011】重量不能超过 1000kg（填错单位要被拦）',
+  `insert into public.workout_sets (session_exercise_id, set_index, weight_kg) values ($1, 2, 2000)`,
+  [wexId],
+);
+
+await actAs(w2);
+const peek = (await db.query(`select count(*)::int n from public.workout_sessions`)).rows[0].n;
+check('【0011】别人看不到我的训练会话', peek === 0, String(peek));
+await myReject(
+  '【0011】也不能往别人的会话里塞动作',
+  `insert into public.workout_exercises (session_id, exercise_id, exercise_name, position) values ($1,'Pushups','俯卧撑',1)`,
+  [sessId],
+);
+
+await actAsAnon();
+await myReject(
+  '【0011】未登录访客连查询权限都没有',
+  `select count(*) from public.workout_sessions`,
+);
+
+await actAsAdmin();
+await db.query(`delete from public.workout_sessions where id = $1`, [sessId]);
+const leftSets = (await db.query(`select count(*)::int n from public.workout_sets`)).rows[0].n;
+const leftEx = (await db.query(`select count(*)::int n from public.workout_exercises`)).rows[0].n;
+check('【0011】删会话时动作和组记录一起级联删除', leftSets === 0 && leftEx === 0, `${leftEx}/${leftSets}`);
+
+await db.query(`delete from auth.users where id = $1`, [w1]);
+await db.query(`delete from auth.users where id = $1`, [w2]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
