@@ -108,8 +108,8 @@ export default async function FitnessPage({
             href={`/fitness/strength?part=胸&date=${today}`}
             className="touch-target flex min-h-28 flex-col justify-between gap-space-2 rounded-xl border border-hairline bg-card p-space-5 transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           >
-            <span className="text-headline font-semibold text-ink">记无氧</span>
-            <span className="text-footnote text-ink-3">胸、肩、背、腿</span>
+            <span className="text-headline font-semibold text-ink">补记一个动作</span>
+            <span className="text-footnote text-ink-3">练完再补记时用 · 胸、肩、背、腿</span>
           </Link>
         </section>
 
