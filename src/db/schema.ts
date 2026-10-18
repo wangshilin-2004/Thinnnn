@@ -619,6 +619,7 @@ export const strengthEntries = pgTable(
     weightKg: numeric('weight_kg', { precision: 6, scale: 2 }),
 
     note: text('note'),
+    sessionId: uuid('session_id'), // 迁移 0012：指向那次训练会话，用于从历史跳回顾
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -630,6 +631,7 @@ export const strengthEntries = pgTable(
       sql`${t.weightKg} is null or (${t.weightKg} >= 0 and ${t.weightKg} <= 1000)`,
     ),
     index('strength_entries_user_date_idx').on(t.userId, t.logDate.desc()),
+    index('strength_entries_session_idx').on(t.sessionId),
   ],
 );
 

@@ -122,6 +122,7 @@ const statements0008 = runMigration('0008_invite_codes_consume.sql');
 const statements0009 = runMigration('0009_fitness_tables.sql');
 const statements0010 = runMigration('0010_username_and_friends.sql');
 const statements0011 = runMigration('0011_workout_sessions.sql');
+const statements0012 = runMigration('0012_session_link.sql');
 
 let migrationError = null;
 try {
@@ -160,12 +161,15 @@ try {
 
   for (const stmt of statements0011) await db.exec(stmt);
   console.log(`  · 0011_workout_sessions.sql 执行完成（${statements0011.length} 条语句）`);
+
+  for (const stmt of statements0012) await db.exec(stmt);
+  console.log(`  · 0012_session_link.sql 执行完成（${statements0012.length} 条语句）`);
 } catch (e) {
   migrationError = e;
 }
 
 check(
-  '十一个迁移文件都能在真 Postgres 上按序跑通',
+  '十二个迁移文件都能在真 Postgres 上按序跑通',
   migrationError === null,
   migrationError ? `${migrationError.message}` : '',
 );

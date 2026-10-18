@@ -345,6 +345,7 @@ export async function finishSession(formData: FormData): Promise<void> {
         sets: done.length,
         reps: Math.max(1, Math.round(repSum / done.length)),
         weightKg: heaviest === null ? null : heaviest.toString(),
+        sessionId,
       });
     }
 
