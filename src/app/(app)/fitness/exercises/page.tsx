@@ -8,6 +8,7 @@ import {
   BODY_PARTS,
   CARDIO_ACTIVITIES,
   EXERCISES,
+  demoSearchUrl,
   exercisesOfPart,
   type BodyPart,
 } from '@/content/exercises';
@@ -100,6 +101,16 @@ export default async function ExercisesPage({
                     <ul className="flex flex-col gap-1 text-footnote text-ink-2">
                       <li>做对：{activity.tips[0]}</li>
                       <li>别这样：{activity.tips[1]}</li>
+                      <li>
+                        <a
+                          href={demoSearchUrl(activity.name)}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-1 text-caption-1 font-semibold text-brand-text underline-offset-2 hover:underline"
+                        >
+                          看真人示范 ↗
+                        </a>
+                      </li>
                     </ul>
                   </article>
                 </li>
@@ -129,6 +140,16 @@ export default async function ExercisesPage({
                     <ul className="flex flex-col gap-1 text-footnote text-ink-2">
                       <li>做对：{exercise.tips[0]}</li>
                       <li>别这样：{exercise.tips[1]}</li>
+                      <li>
+                        <a
+                          href={demoSearchUrl(exercise.name)}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-1 text-caption-1 font-semibold text-brand-text underline-offset-2 hover:underline"
+                        >
+                          看真人示范 ↗
+                        </a>
+                      </li>
                     </ul>
                   </article>
                 </li>
@@ -137,7 +158,9 @@ export default async function ExercisesPage({
 
         <p className="text-caption-1 text-ink-4">
           共 {EXERCISES.length} 个无氧动作、{CARDIO_ACTIVITIES.length} 项有氧。
-          两张定格照片来回淡入用来示意动作的起止位置，不是真的视频。
+          上面是示意图（插画风格，标红的是这块肌肉在发力），不是真人视频。
+          「看真人示范」跳到 B 站的搜索结果 —— 真人视频的质量和讲解因人而异，
+          挑一个你看得懂的就行。
         </p>
       </main>
     </>

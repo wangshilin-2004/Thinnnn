@@ -58,7 +58,7 @@ export default async function SettingsPage() {
         <section className="flex flex-col gap-space-3 rounded-xl border border-hairline bg-card p-space-5">
           <h2 className="text-headline font-semibold text-ink">导出数据</h2>
           <p className="prose-measure text-footnote text-ink-3">
-            把全部记录下载成 CSV。Excel、Numbers、WPS 都能直接打开，
+            把全部记录下载成 CSV（饮食 / 体重 / 训练各一份）。Excel、Numbers、WPS 都能直接打开，
             换工具或者想自己算点什么都行 —— 数据是你的，不该被锁在这个网站里。
           </p>
           <div className="flex flex-wrap gap-space-3">
@@ -78,6 +78,13 @@ export default async function SettingsPage() {
               className="touch-target inline-flex items-center justify-center rounded-md border border-separator bg-sunken px-space-5 py-space-3 text-subhead font-semibold text-ink transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             >
               体重记录
+            </a>
+            <a
+              href="/settings/export?kind=training"
+              download
+              className="touch-target inline-flex items-center justify-center rounded-md border border-separator bg-sunken px-space-5 py-space-3 text-subhead font-semibold text-ink transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              训练记录
             </a>
           </div>
         </section>

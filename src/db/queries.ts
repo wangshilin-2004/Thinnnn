@@ -611,3 +611,115 @@ export async function getFriendFitness(viewerId: string, peerId: string, from: s
     };
   });
 }
+
+/* ── 训练：单日明细 + 全量导出（回顾 / CSV / 好友共用）──────────────
+ *
+ * 之前训练只有「今天」这一种读法（fitness 页自己查的）。回顾页要按天
+ * 铺开、导出要把历史全拿出来、好友页要看对方最近两周 —— 三种读法各写
+ * 一版 SQL 是这一层最容易长歪的地方，所以这里统一成「按天」和「全量」
+ * 两个口径，剩下的聚合放在页面里做。
+ */
+
+export type CardioEntry = {
+  id: string;
+  date: string;
+  activityName: string;
+  minutes: number;
+  intensity: string;
+  distanceKm: number | null;
+  note: string | null;
+};
+
+export type StrengthEntryRow = {
+  id: string;
+  date: string;
+  exerciseName: string;
+  part: string;
+  sets: number;
+  reps: number;
+  weightKg: number | null;
+  note: string | null;
+};
+
+const cardioCols = {
+  id: cardioSessions.id,
+  date: cardioSessions.logDate,
+  activityName: cardioSessions.activityName,
+  minutes: cardioSessions.minutes,
+  intensity: cardioSessions.intensity,
+  distanceKm: cardioSessions.distanceKm,
+  note: cardioSessions.note,
+};
+
+const strengthCols = {
+  id: strengthEntries.id,
+  date: strengthEntries.logDate,
+  exerciseName: strengthEntries.exerciseName,
+  part: strengthEntries.part,
+  sets: strengthEntries.sets,
+  reps: strengthEntries.reps,
+  weightKg: strengthEntries.weightKg,
+  note: strengthEntries.note,
+};
+
+const toCardio = (r: { distanceKm: string | null } & Omit<CardioEntry, 'distanceKm'>): CardioEntry => ({
+  ...r,
+  distanceKm: numOrNull(r.distanceKm),
+});
+
+const toStrength = (r: { weightKg: string | null } & Omit<StrengthEntryRow, 'weightKg'>): StrengthEntryRow => ({
+  ...r,
+  weightKg: numOrNull(r.weightKg),
+});
+
+/** 某一天的有氧 + 力量明细（回顾页的日详情用）。 */
+export async function getFitnessForDate(userId: string, date: string) {
+  return withUser(userId, async (tx) => {
+    const [cardio, strength] = await Promise.all([
+      tx.select(cardioCols).from(cardioSessions)
+        .where(and(eq(cardioSessions.userId, userId), eq(cardioSessions.logDate, date)))
+        .orderBy(asc(cardioSessions.createdAt)),
+      tx.select(strengthCols).from(strengthEntries)
+        .where(and(eq(strengthEntries.userId, userId), eq(strengthEntries.logDate, date)))
+        .orderBy(asc(strengthEntries.createdAt)),
+    ]);
+    return { cardio: cardio.map(toCardio), strength: strength.map(toStrength) };
+  });
+}
+
+/* 全量导出：和 getAllMeals 一样不加 LIMIT —— 导出少一行都是数据丢失。 */
+export async function getAllCardio(userId: string): Promise<CardioEntry[]> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx.select(cardioCols).from(cardioSessions)
+      .where(eq(cardioSessions.userId, userId))
+      .orderBy(asc(cardioSessions.logDate), asc(cardioSessions.createdAt));
+    return rows.map(toCardio);
+  });
+}
+
+export async function getAllStrength(userId: string): Promise<StrengthEntryRow[]> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx.select(strengthCols).from(strengthEntries)
+      .where(eq(strengthEntries.userId, userId))
+      .orderBy(asc(strengthEntries.logDate), asc(strengthEntries.createdAt));
+    return rows.map(toStrength);
+  });
+}
+
+/** 好友最近 N 天的每日摄入热量（好友页的趋势图用）。
+ *
+ *  为什么不在 SQL 里 group by：这里只需要「每天一个数」，而 group by 之后
+ *  numeric 会变成字符串、还要在页面里再转一次。拿原始行在 JS 里累加更好读，
+ *  而且量级很小（一天几十行）。 */
+export async function getFriendIntakeByDay(viewerId: string, peerId: string, from: string) {
+  return withUser(viewerId, async (tx) => {
+    const rows = await tx
+      .select({ date: mealItems.logDate, kcal: mealItems.kcal })
+      .from(mealItems)
+      .where(and(eq(mealItems.userId, peerId), gte(mealItems.logDate, from)));
+
+    const byDay = new Map<string, number>();
+    for (const r of rows) byDay.set(r.date, (byDay.get(r.date) ?? 0) + num(r.kcal));
+    return byDay;
+  });
+}

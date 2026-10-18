@@ -4,7 +4,12 @@ import { notFound } from 'next/navigation';
 
 import { MEAL_LABELS } from '@/db/queries';
 import type { MealType } from '@/db/queries';
-import { getMealsForDate, getProfile, getWeightSeries } from '@/db/queries';
+import {
+  getFitnessForDate,
+  getMealsForDate,
+  getProfile,
+  getWeightSeries,
+} from '@/db/queries';
 import { requireUser } from '@/lib/auth';
 import {
   formatCnDate,
@@ -37,6 +42,12 @@ export async function generateMetadata({
 }
 
 const MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack'];
+
+const INTENSITY_TEXT: Record<string, string> = {
+  easy: '轻松',
+  moderate: '适中',
+  hard: '吃力',
+};
 
 /** 一行「标签 — 数值」。
  *  这一页上全是这种成对信息，抽出来避免八处重复的 flex 类名。 */
@@ -81,10 +92,11 @@ export default async function DayPage({
   // 未来的日子不可能有记录，看它没有意义。
   if (date > today) notFound();
 
-  const [profile, meals, weights] = await Promise.all([
+  const [profile, meals, weights, fitness] = await Promise.all([
     getProfile(user.id),
     getMealsForDate(user.id, date),
     getWeightSeries(user.id, date, date),
+    getFitnessForDate(user.id, date),
   ]);
 
   const weightKg = weights[0]?.kg ?? null;
@@ -107,7 +119,13 @@ export default async function DayPage({
   const diff = targetKcal === null ? null : totalKcal - targetKcal;
 
   const relative = relativeDayLabel(date, today);
-  const hasAnything = meals.length > 0 || weightKg !== null;
+  /* 训练也要算进来：只练了没吃（或者干脆没记饮食）的那天，
+   * 不该显示成「这天没有记录」。 */
+  const hasAnything =
+    meals.length > 0 ||
+    weightKg !== null ||
+    fitness.cardio.length > 0 ||
+    fitness.strength.length > 0;
 
   return (
     <main className="content-max flex flex-col gap-6 py-6 pb-safe-nav sm:gap-8 sm:py-10">
@@ -186,6 +204,49 @@ export default async function DayPage({
                   kg
                 </span>
               </span>
+            </section>
+          )}
+
+          {/* 训练 ────────────────────────────────────────────────
+              和饮食并列，不塞进「摄入」那张卡：训练是消耗，不是摄入，
+              混在一张卡里会让人以为「练了就能多吃」是等式。 */}
+          {(fitness.cardio.length > 0 || fitness.strength.length > 0) && (
+            <section className="flex flex-col gap-3 rounded-xl bg-card p-5">
+              <div className="flex items-baseline justify-between gap-4">
+                <h2 className="text-headline font-semibold text-ink">训练</h2>
+                <span className="tabular text-footnote text-ink-3">
+                  {fitness.cardio.reduce((sum, c) => sum + c.minutes, 0)} 分钟 ·{' '}
+                  {fitness.strength.reduce((sum, st) => sum + st.sets, 0)} 组
+                </span>
+              </div>
+              <ul className="flex flex-col divide-y divide-separator">
+                {fitness.cardio.map((c) => (
+                  <li key={c.id} className="flex items-baseline justify-between gap-3 py-2.5">
+                    <span className="min-w-0 truncate text-subhead text-ink">
+                      {c.activityName}
+                      <span className="ml-2 text-caption-1 text-ink-4">
+                        {INTENSITY_TEXT[c.intensity] ?? c.intensity}
+                        {c.distanceKm === null ? '' : ` · ${c.distanceKm} km`}
+                      </span>
+                    </span>
+                    <span className="tabular shrink-0 text-footnote text-ink-3">
+                      {c.minutes} 分钟
+                    </span>
+                  </li>
+                ))}
+                {fitness.strength.map((st) => (
+                  <li key={st.id} className="flex items-baseline justify-between gap-3 py-2.5">
+                    <span className="min-w-0 truncate text-subhead text-ink">
+                      {st.exerciseName}
+                      <span className="ml-2 text-caption-1 text-ink-4">{st.part}</span>
+                    </span>
+                    <span className="tabular shrink-0 text-footnote text-ink-3">
+                      {st.sets} × {st.reps}
+                      {st.weightKg === null ? ' 自重' : ` · ${st.weightKg} kg`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </section>
           )}
 

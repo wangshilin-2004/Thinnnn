@@ -1462,3 +1462,20 @@ export function findExercise(id: string): Exercise | undefined {
 export function findCardio(id: string): CardioActivity | undefined {
   return CARDIO_ACTIVITIES.find((c) => c.id === id);
 }
+
+/* 真人示范的外链。
+ *
+ * 为什么是「搜一条」而不是「嵌一个视频」：
+ *   1. 能自托管的免费真人示范视频不存在 —— 市面上那套蓝底真人 GIF 是
+ *      Gymvisual 的商业素材（连 22.9k★ 的 exercises-dataset 仓库都在
+ *      NOTICE 里写明 media © Gymvisual），买不起也不该盗。
+ *   2. B 站/抖音的内容是用户上传的，我们不能把它下载放进自己的仓库；
+ *      但**链接过去**是平台允许的用法，而且不会有版权问题。
+ *   3. 用搜索词而不是具体 BV 号：具体视频会下架、会被删，搜索结果永远是
+ *      当下的；而且同一个动作不同人讲法不同，让人自己挑比替他挑好。
+ *
+ * 链接是外部的，所以要 rel="noreferrer noopener" + target="_blank"。
+ */
+export function demoSearchUrl(name: string): string {
+  return `https://search.bilibili.com/all?keyword=${encodeURIComponent(`${name} 动作示范`)}`;
+}
