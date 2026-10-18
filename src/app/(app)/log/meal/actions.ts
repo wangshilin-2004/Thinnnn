@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -8,7 +9,7 @@ import { withUser } from '@/db';
 import type { PickerFood } from '@/db/queries';
 import { foodServings, foods, mealItems } from '@/db/schema';
 import { requireUser } from '@/lib/auth';
-import { round1, scaleNutrition, toPer100g } from '@/lib/nutrition';
+import { addDays, round1, scaleNutrition, toPer100g } from '@/lib/nutrition';
 
 /* 记一餐的写入路径。
  *
@@ -434,4 +435,58 @@ export async function createCustomFood(raw: unknown): Promise<CreateCustomFoodRe
         : null,
     },
   };
+}
+
+/* 复制昨天同一餐。
+ *
+ * 只在那一餐还空着时出现 —— 有记录就不显示，避免手滑把昨天的午饭
+ * 「追加」到今天的午饭上，变成双份热量。
+ */
+export async function copyPreviousMeal(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const parsed = z
+    .object({
+      mealType: z.enum(['breakfast', 'lunch', 'dinner', 'snack']),
+      logDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    })
+    .safeParse({ mealType: formData.get('mealType'), logDate: formData.get('logDate') });
+  if (!parsed.success) redirect('/log/meal');
+
+  const { mealType, logDate } = parsed.data;
+  const yesterday = addDays(logDate, -1);
+
+  await withUser(user.id, async (tx) => {
+    const rows = await tx
+      .select()
+      .from(mealItems)
+      .where(
+        and(
+          eq(mealItems.userId, user.id),
+          eq(mealItems.logDate, yesterday),
+          eq(mealItems.mealType, mealType),
+        ),
+      );
+    if (rows.length === 0) return;
+    await tx.insert(mealItems).values(
+      rows.map((row) => ({
+        userId: user.id,
+        logDate,
+        mealType: row.mealType,
+        foodId: row.foodId,
+        foodName: row.foodName,
+        quantityG: row.quantityG,
+        servingId: row.servingId,
+        servingLabel: row.servingLabel,
+        kcal: row.kcal,
+        proteinG: row.proteinG,
+        fatG: row.fatG,
+        carbG: row.carbG,
+        note: row.note,
+      })),
+    );
+  });
+
+  revalidatePath('/log/meal');
+  revalidatePath('/dashboard');
+  redirect(`/log/meal?date=${logDate}`);
 }

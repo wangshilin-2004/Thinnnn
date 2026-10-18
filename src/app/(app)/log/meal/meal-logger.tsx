@@ -6,7 +6,12 @@ import Link from 'next/link';
 import type { MealType, PickerFood } from '@/db/queries';
 import { portionStep, portionText } from '@/lib/portion';
 
-import { addMealItem, deleteMealItem, updateMealQuantity } from './actions';
+import {
+  addMealItem,
+  copyPreviousMeal,
+  deleteMealItem,
+  updateMealQuantity,
+} from './actions';
 import { CustomFoodForm } from './custom-food-form';
 
 /* 记一餐的交互层。
@@ -516,6 +521,19 @@ export function MealLogger({
             看趋势 →
           </Link>
         </div>
+
+        {optimistic.every((m) => m.mealType !== mealType) && (
+          <form action={copyPreviousMeal} className="mb-3">
+            <input type="hidden" name="mealType" value={mealType} />
+            <input type="hidden" name="logDate" value={logDate} />
+            <button
+              type="submit"
+              className="touch-target rounded-md border border-separator bg-sunken px-space-4 py-space-2 text-footnote text-ink-2"
+            >
+              复制昨天这餐
+            </button>
+          </form>
+        )}
 
         {optimistic.length === 0 ? (
           <p className="rounded-md bg-card px-4 py-6 text-center text-subhead text-ink-3">
