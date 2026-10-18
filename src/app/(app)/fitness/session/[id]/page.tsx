@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { notFound, redirect } from 'next/navigation';
+import { notFound } from 'next/navigation';
 
 import { getSessionDetail } from '@/db/queries';
 import { requireUser } from '@/lib/auth';
@@ -16,7 +16,8 @@ import {
 } from '../../actions';
 import { RestTimer } from './rest-timer';
 
-export const metadata = { title: '训练中' };
+// 静态标题：同一页既可能是「训练中」也可能是「练完了」，写死其中一个都会骗人
+export const metadata = { title: '训练' };
 
 export default async function SessionPage({
   params,
@@ -31,7 +32,7 @@ export default async function SessionPage({
 
   const session = await getSessionDetail(user.id, id);
   if (!session) notFound();
-  if (session.finishedAt) redirect('/fitness');
+  if (session.finishedAt) return <SessionSummary session={session} />;
 
   const doneSets = session.exercises.reduce(
     (n, ex) => n + ex.sets.filter((s) => s.finishedAt).length,
@@ -229,6 +230,113 @@ export default async function SessionPage({
             放弃
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/* 练完之后的回顾。
+ *
+ * 和数据的关系：这次训练的「结果」在结束时已经折成 strength_entries 了，
+ * 所以这一页纯粹是回看，不写任何东西 —— 也因此不需要表单和确认，
+ * 打开就能关掉。 */
+function SessionSummary({ session }: { session: NonNullable<Awaited<ReturnType<typeof getSessionDetail>>> }) {
+  const started = new Date(session.startedAt).getTime();
+  const ended = new Date(session.finishedAt as string).getTime();
+  const minutes = Math.max(1, Math.round((ended - started) / 60000));
+
+  const rows = session.exercises
+    .map((ex) => {
+      const done = ex.sets.filter((s) => s.finishedAt);
+      const volume = done.reduce((sum, s) => sum + (s.weightKg ?? 0) * (s.reps ?? 0), 0);
+      const best = done.reduce<null | { weight: number; reps: number }>((acc, s) => {
+        const w = s.weightKg ?? 0;
+        if (!acc || w > acc.weight) return { weight: w, reps: s.reps ?? ex.targetReps };
+        return acc;
+      }, null);
+      return { ex, done: done.length, volume, best };
+    })
+    .filter((r) => r.done > 0);
+
+  const totalSets = rows.reduce((n, r) => n + r.done, 0);
+  const totalVolume = rows.reduce((n, r) => n + r.volume, 0);
+
+  return (
+    <div className="pb-safe-nav mx-auto w-full max-w-[980px] px-4 py-6">
+      <Link href="/fitness" className="text-footnote text-ink-3">
+        ‹ 训练
+      </Link>
+
+      <p className="mt-space-4 text-footnote text-ink-3">{formatCnDate(session.logDate)}</p>
+      <h1 className="text-title-1 font-semibold text-ink">{session.part} · 练完了</h1>
+
+      <div className="glass mt-space-5 grid grid-cols-3 gap-space-2 rounded-md p-space-4 text-center">
+        {[
+          { label: '时长', value: `${minutes} 分钟` },
+          { label: '总组数', value: `${totalSets} 组` },
+          { label: '总容量', value: `${Math.round(totalVolume)} kg` },
+        ].map((item) => (
+          <div key={item.label}>
+            <p className="text-caption-1 text-ink-3">{item.label}</p>
+            <p className="tabular mt-space-1 text-headline font-semibold text-ink">{item.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-space-5 space-y-space-3">
+        {rows.map(({ ex, done, volume, best }) => (
+          <section key={ex.id} className="glass rounded-md p-space-4">
+            <div className="flex items-start justify-between gap-space-3">
+              <div className="min-w-0">
+                <h2 className="text-headline font-semibold text-ink">{ex.exerciseName}</h2>
+                <p className="mt-space-1 text-footnote text-ink-3">
+                  {done} 组
+                  {best && best.weight > 0 && ` · 最好 ${best.weight} kg × ${best.reps} 次`}
+                  {volume > 0 && ` · 容量 ${Math.round(volume)} kg`}
+                </p>
+              </div>
+              {(() => {
+                const meta = findExercise(ex.exerciseId);
+                return meta ? (
+                  <MuscleMap muscles={meta.muscles} secondary={meta.secondary} width={30} />
+                ) : null;
+              })()}
+            </div>
+            <ul className="mt-space-2 flex flex-wrap gap-space-2">
+              {ex.sets
+                .filter((s) => s.finishedAt)
+                .map((s) => (
+                  <li
+                    key={s.id}
+                    className="tabular rounded-md bg-sunken px-space-2 py-1 text-footnote text-ink-2"
+                  >
+                    {s.weightKg ? `${s.weightKg} kg` : '自重'} × {s.reps ?? ex.targetReps}
+                  </li>
+                ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+
+      {rows.length === 0 && (
+        <p className="mt-space-5 rounded-md bg-sunken p-space-4 text-subhead text-ink-2">
+          这次一组都没做完，所以没有写进训练记录。
+        </p>
+      )}
+
+      <div className="mt-space-6 grid grid-cols-2 gap-space-3">
+        <Link
+          href="/fitness"
+          className="touch-target flex items-center justify-center rounded-md bg-brand py-space-3 text-headline font-semibold text-on-accent"
+        >
+          回训练页
+        </Link>
+        <Link
+          href="/history"
+          className="touch-target flex items-center justify-center rounded-md border border-separator py-space-3 text-subhead text-ink-2"
+        >
+          看回顾
+        </Link>
       </div>
     </div>
   );
