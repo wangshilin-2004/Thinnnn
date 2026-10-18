@@ -538,6 +538,92 @@ export const inviteCodes = pgTable(
 );
 
 // ═══════════════════════════════════════════════════════════════
+//  9. cardio_sessions —— 有氧记录
+// ═══════════════════════════════════════════════════════════════
+//
+//  【为什么有氧和无氧是两张表，而不是一张加个 type 列】
+//  两者的记录形状根本不同：有氧是「一个项目 + 时长（+ 可选距离）」，
+//  无氧是「一个动作 + 组数 × 次数（+ 可选重量）」。
+//  硬塞进一张表，一半的列对另一半的行永远为 NULL，
+//  CHECK 约束也只能写成「互斥」的一团，谁看都容易写错。
+//
+//  【为什么还要存名字快照】
+//  和 meal_items 同一个理由（docs/04 §2）：动作目录是我们维护的内容
+//  文件，删掉一条动作不该让三年前的训练记录变成空白。
+//  activity_name / exercise_name 是写入时的快照 —— 历史就该是历史。
+
+export const cardioSessions = pgTable(
+  'cardio_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    // 外键 → auth.users(id) ON DELETE CASCADE，在 0009 迁移里手写添加
+    userId: uuid('user_id').notNull(),
+
+    // 业务日：和 meal_items 一样，是按用户时区算出来的「日历上那一格」
+    logDate: date('log_date', { mode: 'string' }).notNull(),
+
+    activityId: text('activity_id').notNull(),
+    activityName: text('activity_name').notNull(),
+
+    minutes: integer('minutes').notNull(),
+    // 强度用三档而不是心率区：手环不是人人都有，而「还能说话 / 说不上话」
+    // 是任何人都能当场判断的标准。
+    intensity: text('intensity').notNull().default('moderate'),
+    // 距离只有跑步 / 骑行 / 划船这类才有意义，所以可空。
+    distanceKm: numeric('distance_km', { precision: 6, scale: 2 }),
+
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('cardio_sessions_minutes_check', sql`${t.minutes} > 0 and ${t.minutes} <= 600`),
+    check('cardio_sessions_intensity_check', sql`${t.intensity} in ('easy','moderate','hard')`),
+    check(
+      'cardio_sessions_distance_check',
+      sql`${t.distanceKm} is null or (${t.distanceKm} >= 0 and ${t.distanceKm} <= 500)`,
+    ),
+    index('cardio_sessions_user_date_idx').on(t.userId, t.logDate.desc()),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════
+//  10. strength_entries —— 无氧记录
+// ═══════════════════════════════════════════════════════════════
+
+export const strengthEntries = pgTable(
+  'strength_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+
+    logDate: date('log_date', { mode: 'string' }).notNull(),
+
+    exerciseId: text('exercise_id').notNull(),
+    exerciseName: text('exercise_name').notNull(),
+    // 部位一起存下来：按部位统计训练量时不用回表查目录文件。
+    part: text('part').notNull(),
+
+    sets: integer('sets').notNull(),
+    reps: integer('reps').notNull(),
+    // 自重动作没有重量。null 和 0 在语义上不一样（0 是「填错了」）。
+    weightKg: numeric('weight_kg', { precision: 6, scale: 2 }),
+
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('strength_entries_part_check', sql`${t.part} in ('胸','肩','背','腿')`),
+    check('strength_entries_sets_check', sql`${t.sets} > 0 and ${t.sets} <= 50`),
+    check('strength_entries_reps_check', sql`${t.reps} > 0 and ${t.reps} <= 200`),
+    check(
+      'strength_entries_weight_check',
+      sql`${t.weightKg} is null or (${t.weightKg} >= 0 and ${t.weightKg} <= 1000)`,
+    ),
+    index('strength_entries_user_date_idx').on(t.userId, t.logDate.desc()),
+  ],
+);
+
+// ═══════════════════════════════════════════════════════════════
 //  导出推断类型
 // ═══════════════════════════════════════════════════════════════
 //  Drizzle 的核心卖点之一：类型从 schema 自动推导，不需要手写
@@ -566,3 +652,9 @@ export type NewDailySummary = typeof dailySummary.$inferInsert;
 
 export type FoodFavorite = typeof foodFavorites.$inferSelect;
 export type InviteCode = typeof inviteCodes.$inferSelect;
+
+export type CardioSession = typeof cardioSessions.$inferSelect;
+export type NewCardioSession = typeof cardioSessions.$inferInsert;
+
+export type StrengthEntry = typeof strengthEntries.$inferSelect;
+export type NewStrengthEntry = typeof strengthEntries.$inferInsert;

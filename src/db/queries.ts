@@ -4,12 +4,14 @@ import { and, asc, desc, eq, gte, lte } from 'drizzle-orm';
 
 import { withUser } from '@/db';
 import {
+  cardioSessions,
   dailySummary,
   foodServings,
   foods,
   mealItems,
   measurements,
   profiles,
+  strengthEntries,
 } from '@/db/schema';
 
 /* 业务查询层。
@@ -383,5 +385,110 @@ export async function getAllWeights(userId: string): Promise<WeightExportRow[]> 
       measuredAt: r.measuredAt === null ? null : r.measuredAt.toISOString(),
       note: r.note,
     }));
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ *  训练记录（有氧 / 无氧）
+ *
+ *  有氧和无氧是两条独立的查询，不做 UNION —— 它们的列不一样，
+ *  硬拼成一张表反而要靠 type 字段在应用层分叉，读起来更绕。
+ * ───────────────────────────────────────────────────────────────────────── */
+
+export type CardioRow = {
+  id: string;
+  activityName: string;
+  minutes: number;
+  intensity: 'easy' | 'moderate' | 'hard';
+  distanceKm: number | null;
+  note: string | null;
+};
+
+export type StrengthRow = {
+  id: string;
+  exerciseName: string;
+  part: string;
+  sets: number;
+  reps: number;
+  weightKg: number | null;
+  note: string | null;
+};
+
+/** 某一天的有氧记录 */
+export async function getCardioForDate(userId: string, date: string): Promise<CardioRow[]> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx
+      .select({
+        id: cardioSessions.id,
+        activityName: cardioSessions.activityName,
+        minutes: cardioSessions.minutes,
+        intensity: cardioSessions.intensity,
+        distanceKm: cardioSessions.distanceKm,
+        note: cardioSessions.note,
+      })
+      .from(cardioSessions)
+      .where(and(eq(cardioSessions.userId, userId), eq(cardioSessions.logDate, date)))
+      .orderBy(asc(cardioSessions.createdAt));
+
+    return rows.map((r) => ({
+      id: r.id,
+      activityName: r.activityName,
+      minutes: r.minutes,
+      intensity: r.intensity as CardioRow['intensity'],
+      distanceKm: numOrNull(r.distanceKm),
+      note: r.note,
+    }));
+  });
+}
+
+/** 某一天的无氧记录 */
+export async function getStrengthForDate(
+  userId: string,
+  date: string,
+): Promise<StrengthRow[]> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx
+      .select({
+        id: strengthEntries.id,
+        exerciseName: strengthEntries.exerciseName,
+        part: strengthEntries.part,
+        sets: strengthEntries.sets,
+        reps: strengthEntries.reps,
+        weightKg: strengthEntries.weightKg,
+        note: strengthEntries.note,
+      })
+      .from(strengthEntries)
+      .where(and(eq(strengthEntries.userId, userId), eq(strengthEntries.logDate, date)))
+      .orderBy(asc(strengthEntries.createdAt));
+
+    return rows.map((r) => ({
+      id: r.id,
+      exerciseName: r.exerciseName,
+      part: r.part,
+      sets: r.sets,
+      reps: r.reps,
+      weightKg: numOrNull(r.weightKg),
+      note: r.note,
+    }));
+  });
+}
+
+/** 最近 n 天的有氧与无氧记录（一次取回，在页面里聚合成「最近练了几天」）。 */
+export async function getFitnessSince(
+  userId: string,
+  from: string,
+): Promise<{ cardio: { date: string; minutes: number }[]; strength: { date: string; sets: number }[] }> {
+  return withUser(userId, async (tx) => {
+    const [cardio, strength] = await Promise.all([
+      tx
+        .select({ date: cardioSessions.logDate, minutes: cardioSessions.minutes })
+        .from(cardioSessions)
+        .where(and(eq(cardioSessions.userId, userId), gte(cardioSessions.logDate, from))),
+      tx
+        .select({ date: strengthEntries.logDate, sets: strengthEntries.sets })
+        .from(strengthEntries)
+        .where(and(eq(strengthEntries.userId, userId), gte(strengthEntries.logDate, from))),
+    ]);
+    return { cardio, strength };
   });
 }

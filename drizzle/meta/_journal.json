@@ -64,6 +64,13 @@
       "when": 1792222157639,
       "tag": "0008_invite_codes_consume",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792310000000,
+      "tag": "0009_fitness_tables",
+      "breakpoints": true
     }
   ]
 }

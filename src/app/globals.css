@@ -813,6 +813,42 @@
     );
     filter: blur(80px);
   }
+
+  /* ---- 动作演示：两帧交叉淡入 ----
+   * free-exercise-db 每个动作只有「起点」「终点」两张定格照片，没有 GIF。
+   * 与其假装有动图，不如让这两帧来回淡过去 —— 用户看到的是动作的起止
+   * 位置，足够判断「这动作到底长什么样」。
+   *
+   * 交叉而不是先后切换：先后切换会有一瞬间两张图都半透明，
+   * 看起来像信号不好在闪。这里第二张从 opacity 0 淡到 1 再淡回来
+   *（alternate），第一张始终在底下垫着，任何时候都至少有一张是实的。
+   *
+   * 性能：只动 opacity（合成层合成），不动 width/height/filter，
+   * 一部手机同屏十几个这些图也不会掉帧。
+   * 用了 will-change 的图会各自提升一层，所以只给会动的那张加。
+   */
+  .pose-frame {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    width: 100%;
+    object-fit: cover;
+  }
+
+  .pose-frame-b {
+    opacity: 0;
+    animation: pose-crossfade 2.6s ease-in-out infinite alternate;
+    will-change: opacity;
+  }
+
+  @keyframes pose-crossfade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 }
 
 /* ============================================================================

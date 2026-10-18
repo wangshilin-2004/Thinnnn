@@ -119,6 +119,7 @@ const statements0005 = runMigration('0005_harden_grants_and_cascade_fix.sql');
 const statements0006 = runMigration('0006_summary_target_snapshot.sql');
 const statements0007 = runMigration('0007_fix_account_deletion.sql');
 const statements0008 = runMigration('0008_invite_codes_consume.sql');
+const statements0009 = runMigration('0009_fitness_tables.sql');
 
 let migrationError = null;
 try {
@@ -148,12 +149,15 @@ try {
 
   for (const stmt of statements0008) await db.exec(stmt);
   console.log(`  · 0008_invite_codes_consume.sql 执行完成（${statements0008.length} 条语句）`);
+
+  for (const stmt of statements0009) await db.exec(stmt);
+  console.log(`  · 0009_fitness_tables.sql 执行完成（${statements0009.length} 条语句）`);
 } catch (e) {
   migrationError = e;
 }
 
 check(
-  '八个迁移文件都能在真 Postgres 上按序跑通',
+  '九个迁移文件都能在真 Postgres 上按序跑通',
   migrationError === null,
   migrationError ? `${migrationError.message}` : '',
 );
@@ -205,28 +209,30 @@ const { rows: fkRows } = await db.query(`
 `);
 const fkTables = fkRows.map((r) => r.tbl.replace(/^public\./, '').replace(/"/g, ''));
 const EXPECTED_FK_TABLES = [
+  'cardio_sessions',
   'daily_summary',
   'food_favorites',
   'foods',
   'meal_items',
   'measurements',
   'profiles',
+  'strength_entries',
 ];
 check(
-  `6 个指向 auth.users 的外键存在（实际 ${fkRows.length} 个）`,
+  `8 个指向 auth.users 的外键存在（实际 ${fkRows.length} 个）`,
   EXPECTED_FK_TABLES.every((t) => fkTables.includes(t)),
   `缺少：${EXPECTED_FK_TABLES.filter((t) => !fkTables.includes(t)).join(', ')}`,
 );
 
 check(
   '外键都是 ON DELETE CASCADE（删账号时数据跟着清）',
-  fkRows.length === 6 &&
+  fkRows.length === 8 &&
     (
       await db.query(`
         select count(*)::int c from pg_constraint
         where contype='f' and confrelid='auth.users'::regclass and confdeltype='c'
       `)
-    ).rows[0].c === 6,
+    ).rows[0].c === 8,
 );
 
 // RLS 是否全部开启
@@ -237,7 +243,7 @@ const { rows: rlsRows } = await db.query(`
 `);
 const rlsOff = rlsRows.filter((r) => !r.relrowsecurity).map((r) => r.relname);
 check(
-  '8 张表全部开启了 RLS（漏一张就是一次数据泄露）',
+  `${rlsRows.length} 张表全部开启了 RLS（漏一张就是一次数据泄露）`,
   rlsOff.length === 0,
   `未开启：${rlsOff.join(', ')}`,
 );
@@ -1016,6 +1022,14 @@ check(
 for (const stmt of statements0005) await db.exec(stmt);
 
 const afterRevoke = await countPrivs(['TRUNCATE', 'REFERENCES', 'TRIGGER']);
+// ⚠ 0005 收权限用的是「REVOKE ALL ON ALL TABLES」—— 它对 0005 之后新建的
+//   表同样生效。线上迁移是按序只跑一次，真实环境没这个问题；但这里为了
+//   证明 0005 幂等又重跑了一遍，会把 0009 给两张训练表发的权限一起收掉，
+//   于是「用户的正常增删改查」在后面的组里会假失败。补回来。
+await db.exec(`
+  grant select, insert, update, delete on public.cardio_sessions  to authenticated;
+  grant select, insert, update, delete on public.strength_entries to authenticated;
+`);
 check(
   '【0005】重跑后 TRUNCATE / REFERENCES / TRIGGER 全被收回（同时证明 0005 幂等）',
   afterRevoke === 0,
@@ -1381,6 +1395,197 @@ check(
   lDef.length === 2 && lDef.every((r) => r.proconfig.some((c) => c.startsWith('search_path='))),
   `实际 ${JSON.stringify(lDef.map((r) => [r.proname, r.proconfig]))}`,
 );
+
+// ═══════════════════════════════════════════════════════════════════════
+//  【M】0009 · 训练记录（cardio_sessions / strength_entries）
+// ═══════════════════════════════════════════════════════════════════════
+//  这一组盯三类事故：
+//    · RLS 漏了某个动作     → 朋友能看到你练了什么（隐私事故）
+//    · CHECK 写了但没生效   → 0 分钟的有氧、负数的重量混进统计
+//    · 外键忘了 CASCADE     → 注销账号又删不掉了（0007 刚修过的老问题）
+
+await actAsAdmin();
+
+// 用一层块级作用域把这一组的临时变量圈起来：前面 1000 多行已有
+// rlsRows / polRows 这类同名的中间量，重名会让整个文件连解析都过不去。
+{
+const fitA = (await db.query(`insert into auth.users (email) values ('fitness-a@example.invalid') returning id`))
+  .rows[0].id;
+const fitB = (await db.query(`insert into auth.users (email) values ('fitness-b@example.invalid') returning id`))
+  .rows[0].id;
+
+const rlsRows = (
+  await db.query(
+    `select relname, relrowsecurity from pg_class
+      where relname in ('cardio_sessions','strength_entries') order by relname`,
+  )
+).rows;
+check(
+  '【0009】两张训练表都开了 RLS',
+  rlsRows.length === 2 && rlsRows.every((r) => r.relrowsecurity === true),
+  JSON.stringify(rlsRows),
+);
+
+const polRows = (
+  await db.query(
+    `select tablename, count(*)::int as n from pg_policies
+      where schemaname = 'public' and tablename in ('cardio_sessions','strength_entries')
+      group by tablename order by tablename`,
+  )
+).rows;
+check(
+  '【0009】每张表四道策略（查/插/改/删各一）',
+  polRows.length === 2 && polRows.every((r) => r.n === 4),
+  JSON.stringify(polRows),
+);
+
+// ── 用户 A 记一次有氧 ────────────────────────────────────────────────
+await actAs(fitA);
+const cardioIns = (
+  await db.query(
+    `insert into public.cardio_sessions
+       (user_id, log_date, activity_id, activity_name, minutes, intensity, distance_km)
+     values ($1, '2026-10-18', 'Running_Treadmill', '跑步机', 30, 'moderate', 4.5)
+     returning id`,
+    [fitA],
+  )
+).rows[0];
+check('【0009】用户可以写自己的有氧记录', Boolean(cardioIns?.id));
+
+// ── 自重动作没有重量：weight_kg 必须允许 NULL ────────────────────────
+const strengthIns = (
+  await db.query(
+    `insert into public.strength_entries
+       (user_id, log_date, exercise_id, exercise_name, part, sets, reps)
+     values ($1, '2026-10-18', 'Pushups', '俯卧撑', '胸', 4, 12)
+     returning id`,
+    [fitA],
+  )
+).rows[0];
+check('【0009】自重动作能记（weight_kg 为 NULL 不该被拦）', Boolean(strengthIns?.id));
+
+// ── 隔离：A 看不到 B 的 ──────────────────────────────────────────────
+await actAs(fitB);
+const bSeesCardio = (await db.query(`select count(*)::int as n from public.cardio_sessions`)).rows[0].n;
+const bSeesStrength = (await db.query(`select count(*)::int as n from public.strength_entries`)).rows[0].n;
+check(
+  '【0009】另一个用户看不到别人的训练记录（RLS 真在生效）',
+  bSeesCardio === 0 && bSeesStrength === 0,
+  `有氧 ${bSeesCardio} 行 / 无氧 ${bSeesStrength} 行`,
+);
+
+// ── 不能替别人写 ─────────────────────────────────────────────────────
+let spoofErr = null;
+try {
+  await db.query(
+    `insert into public.cardio_sessions (user_id, log_date, activity_id, activity_name, minutes)
+     values ($1, '2026-10-18', 'Stairmaster', '爬楼机', 20)`,
+    [fitA],
+  );
+} catch (e) {
+  spoofErr = e.message;
+}
+check(
+  '【0009】不能把记录写到别人名下（WITH CHECK 挡住）',
+  spoofErr !== null,
+  spoofErr ?? '居然插进去了',
+);
+
+// ── CHECK 约束 ───────────────────────────────────────────────────────
+async function expectReject(label, sqlText, params = []) {
+  await actAs(fitA);
+  let err = null;
+  try {
+    await db.query(sqlText, params);
+  } catch (e) {
+    err = e.message;
+  }
+  check(label, err !== null, err ?? '居然被接受了');
+}
+
+await expectReject(
+  '【0009】0 分钟的有氧被 CHECK 拒绝',
+  `insert into public.cardio_sessions (user_id, log_date, activity_id, activity_name, minutes)
+   values ($1, '2026-10-18', 'Running_Treadmill', '跑步机', 0)`,
+  [fitA],
+);
+
+await expectReject(
+  '【0009】强度只能是 easy/moderate/hard',
+  `insert into public.cardio_sessions (user_id, log_date, activity_id, activity_name, minutes, intensity)
+   values ($1, '2026-10-18', 'Running_Treadmill', '跑步机', 30, 'insane')`,
+  [fitA],
+);
+
+await expectReject(
+  '【0009】部位只能是胸/肩/背/腿（新增部位要一起改迁移）',
+  `insert into public.strength_entries (user_id, log_date, exercise_id, exercise_name, part, sets, reps)
+   values ($1, '2026-10-18', 'Pushups', '俯卧撑', '手臂', 4, 12)`,
+  [fitA],
+);
+
+await expectReject(
+  '【0009】0 组被 CHECK 拒绝',
+  `insert into public.strength_entries (user_id, log_date, exercise_id, exercise_name, part, sets, reps)
+   values ($1, '2026-10-18', 'Pushups', '俯卧撑', '胸', 0, 12)`,
+  [fitA],
+);
+
+await expectReject(
+  '【0009】负重量被 CHECK 拒绝',
+  `insert into public.strength_entries
+     (user_id, log_date, exercise_id, exercise_name, part, sets, reps, weight_kg)
+   values ($1, '2026-10-18', 'Barbell_Squat', '杠铃深蹲', '腿', 5, 5, -20)`,
+  [fitA],
+);
+
+// ── 索引存在（按 user_id + log_date 查历史时要用上） ─────────────────
+const idxRows = (
+  await db.query(
+    `select indexname from pg_indexes
+      where schemaname = 'public'
+        and indexname in ('cardio_sessions_user_date_idx','strength_entries_user_date_idx')
+      order by indexname`,
+  )
+).rows;
+check(
+  '【0009】两张表都有 (user_id, log_date desc) 索引',
+  idxRows.length === 2,
+  JSON.stringify(idxRows),
+);
+
+// ── anon 读不到 ──────────────────────────────────────────────────────
+await actAsAnon();
+let anonRows = null;
+let anonErr = null;
+try {
+  anonRows = (await db.query(`select id from public.cardio_sessions`)).rows;
+} catch (e) {
+  anonErr = e.message;
+}
+check(
+  '【0009】未登录访客读不到训练记录',
+  anonErr !== null || anonRows.length === 0,
+  anonErr ?? `居然读到了 ${anonRows.length} 行`,
+);
+
+// ── 级联删除：注销账号不留孤儿训练记录 ───────────────────────────────
+await actAsAdmin();
+await db.query(`delete from auth.users where id = $1`, [fitA]);
+const leftRows = (
+  await db.query(
+    `select
+       (select count(*)::int from public.cardio_sessions  where user_id = $1) as cardio,
+       (select count(*)::int from public.strength_entries where user_id = $1) as strength`,
+    [fitA],
+  )
+).rows[0];
+check(
+  '【0009】删账号时训练记录跟着级联删除（不留孤儿行）',
+  leftRows.cardio === 0 && leftRows.strength === 0,
+  JSON.stringify(leftRows),
+);
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //  结果
