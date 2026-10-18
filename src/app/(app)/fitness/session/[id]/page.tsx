@@ -62,6 +62,12 @@ export default async function SessionPage({
       <p className="mt-space-2 text-subhead text-ink-3">
         已完成 {doneExercises}/{session.exercises.length} 个动作 · {doneSets} 组
       </p>
+      <p className="mt-space-1 text-footnote text-ink-4">
+        {/* 服务端组件，一次请求渲染一次；「已练多久」本来就取决于「现在」，
+            所以这里用 Date.now() 是有意的，不是渲染不纯。 */}
+        {/* eslint-disable-next-line react-hooks/purity */}
+        已练 {Math.max(1, Math.round((Date.now() - new Date(session.startedAt).getTime()) / 60000))} 分钟
+      </p>
 
       {resting && <RestTimer key={`${rest}-${doneSets}`} seconds={resting.restSeconds} />}
 

@@ -171,7 +171,9 @@ export default async function HistoryPage() {
               {/* 列 = 周，行 = 星期几。整块只是密度可视化：
                * 每格 16px，做不到 44px 的触控目标，所以不单独可点 ——
                * 要进某一天，走下面「最近记录」的列表。 */}
-              <div className="flex gap-[3px]" aria-hidden>
+              <p className="text-caption-2 text-ink-4">想回看某一天？点下面的列表</p>
+
+<div className="flex gap-[3px]" aria-hidden>
                 {weeks.map((week, weekIndex) => (
                   <div
                     key={weekIndex}

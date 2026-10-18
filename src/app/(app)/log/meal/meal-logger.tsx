@@ -264,6 +264,7 @@ export function MealLogger({
     setError(null);
     startTransition(async () => {
       applyPatch({ kind: 'remove', id });
+      if (!window.confirm('删掉这条记录？删了就找不回来了。')) return;
       const res = await deleteMealItem({ id });
       if (!res.ok) setError(res.error ?? '删除失败');
     });
