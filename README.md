@@ -29,7 +29,7 @@
 | ORM | Drizzle | SQL-like、无 codegen、原生窗口函数。Prisma 的复杂聚合容易退化成 `$queryRaw` |
 | 权限 | **RLS（行级安全）** | 每条查询都在事务里 `set local role authenticated`，越权由**数据库**拦，不靠应用层记得写 `where user_id = ?` |
 | 样式 | Tailwind v4 + CSS 自定义属性 | 设计 token 只有一个来源（`src/app/globals.css`），组件里不写死颜色 |
-| 训练动作图 | [free-exercise-db](https://github.com/yuhonas/free-exercise-db)（Unlicense / 公有领域）+ [react-body-highlighter](https://github.com/gym-labs/react-body-highlighter)（MIT） | 现成的健身动作库要么图是付费 API、要么不带肌肉标注。这份数据集给每个动作两张定格照片（起点/终点），配一个可单独上色的人体 SVG，正好拼出「看得懂的动作 + 标出练哪儿」。照片已压成 460px WebP 随仓库走，不外链 |
+| 训练动作动画 | [exercises-gifs](https://github.com/omercotkd/exercises-gifs)（MIT）+ [react-body-highlighter](https://github.com/gym-labs/react-body-highlighter)（MIT） | 现成的健身动作库要么素材是付费 API、要么不带肌肉标注。这份数据集给每个动作 12 帧人体解剖示意图（训练肌群标红），抠掉白底、统一帧间隔后压成 300px 循环 WebP 随仓库走，不外链任何境外 CDN。少数没有动画的项目回落到实拍两帧。素材来源与许可全文见 `public/exercises/NOTICE.txt` |
 | 图表 | 手写 SVG | 苹果风图表的关键是圆角柱、渐变面积、圆头细线 —— 这些在 SVG 里是原生属性，在 Canvas 里要自己画 |
 | 认证 | Supabase Auth（邮箱魔法链接 **+** 密码），注册需邀请码 | 默认不存密码。但发信这条路会坏 —— 免费档对自带发信有每小时几封的硬限制，GitHub 的 noreply 地址更是压根收不到信 —— 所以密码是不依赖第三方的备用通道。邀请码的扣减放在数据库函数里（迁移 0008），应用层「先查再写」在并发下会把一个 1 次的码用成 2 次 |
 
@@ -69,7 +69,7 @@ npm run verify
 ```
 typecheck       →  tsc --noEmit
 lint            →  eslint
-test            →  131 项单测（营养计算 / 时区 / 份量 / 日历排布 / CSV 转义 / 邀请码 / 动作库完整性）
+test            →  132 项单测（营养计算 / 时区 / 份量 / 日历排布 / CSV 转义 / 邀请码 / 动作库完整性）
 actions:verify  →  'use server' 文件里没有非法导出（非 async 导出会让页面 500）
 headers:verify  →  四个安全响应头都在，且没有「有等于没有」的 CSP
 db:verify       →  101 项数据库断言（在内存 Postgres 上跑真实迁移文件）

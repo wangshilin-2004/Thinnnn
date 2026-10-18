@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { ExerciseFrames } from '@/components/exercise-frames';
+import { ExerciseAnim } from '@/components/exercise-anim';
 import { MuscleMap } from '@/components/muscle-map';
 import { SiteHeader } from '@/components/site-header';
 import {
@@ -50,7 +50,7 @@ export default async function ExercisesPage({
           </Link>
           <div className="flex flex-col gap-1">
             <p className="text-subhead text-ink-3">
-              {count} 个动作 · 图来自 free-exercise-db
+              {count} 个动作 · 动画来自 exercises-gifs（MIT）
             </p>
             <h1 className="text-title-1 font-semibold tracking-title text-ink">动作库</h1>
           </div>
@@ -78,23 +78,17 @@ export default async function ExercisesPage({
 
         {/* 图例。没有它的话，图上亮起来的红色只是一个好看的色块 ——
             用户得自己猜到「亮红是主要、浅红是次要」。 */}
-        {!isCardio && (
-          <p className="flex items-center gap-2 text-caption-1 text-ink-3">
-            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#ff453a]" aria-hidden />
-            主要发力
-            <span className="ml-space-2 inline-block h-2.5 w-2.5 rounded-sm bg-[#ff8f7a]" aria-hidden />
-            次要参与
-            <span className="ml-space-2 inline-block h-2.5 w-2.5 rounded-sm bg-[#3c6b52]" aria-hidden />
-            身体
-          </p>
-        )}
+        <p className="flex items-center gap-2 text-caption-1 text-ink-3">
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#ff453a]" aria-hidden />
+          红色 = 这个动作练到的肌肉
+        </p>
 
         <ul className="grid grid-cols-1 gap-space-4 sm:grid-cols-2">
           {isCardio
             ? CARDIO_ACTIVITIES.map((activity) => (
                 <li key={activity.id}>
                   <article className="flex flex-col gap-space-3 rounded-xl bg-card p-space-4">
-                    <ExerciseFrames id={activity.id} name={activity.name} />
+                    <ExerciseAnim id={activity.id} name={activity.name} hasLoop={activity.hasLoop !== false} />
                     <div className="flex flex-col gap-0.5">
                       <h2 className="text-headline font-semibold text-ink">
                         {activity.name}
@@ -113,7 +107,7 @@ export default async function ExercisesPage({
             : exercises.map((exercise) => (
                 <li key={exercise.id}>
                   <article className="flex flex-col gap-space-3 rounded-xl bg-card p-space-4">
-                    <ExerciseFrames id={exercise.id} name={exercise.name} />
+                    <ExerciseAnim id={exercise.id} name={exercise.name} />
                     <div className="flex items-start justify-between gap-space-3">
                       <div className="flex min-w-0 flex-col gap-0.5">
                         <h2 className="text-headline font-semibold text-ink">

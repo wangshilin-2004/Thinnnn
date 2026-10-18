@@ -2,10 +2,14 @@
  * 健身动作目录。
  *
  * 名称、要领是中文手写的；肌群、器械、难度来自 free-exercise-db
- * （https://github.com/yuhonas/free-exercise-db ，Unlicense / 公有领域），
- * 图片也来自该数据集，已下载到 public/exercises/<id>/0.webp 与 1.webp。
+ * （https://github.com/yuhonas/free-exercise-db ，Unlicense / 公有领域）。
  *
- * 这是内容文件不是逻辑文件：加一个动作 = 在这里加一条 + 放两张图，
+ * 演示动画来自 exercises-gifs（https://github.com/omercotkd/exercises-gifs ，
+ * MIT）：每个动作 12 帧人体解剖示意图，训练肌群标红。原始 GIF 360×360、
+ * 起点终点各停 1 秒；本仓库把它们压成 300×300 的单色透明 WebP，
+ * 每帧 85ms 连续循环，放在 public/exercises/<id>/loop.webp。
+ *
+ * 这是内容文件不是逻辑文件：加一个动作 = 在这里加一条 + 放一张 loop.webp，
  * 不需要改任何组件。
  */
 import type { Muscle } from 'react-body-highlighter';
@@ -38,6 +42,8 @@ export interface Exercise {
 export interface CardioActivity {
   id: string;
   name: string;
+  /** 动作库缺这个项目的动画时为 false —— 此时回落到两张实拍照片交替淡入 */
+  hasLoop?: boolean;
   en: string;
   level: '入门' | '进阶';
   /** [要领, 常见错误] */
@@ -1059,9 +1065,9 @@ export const EXERCISES: Exercise[] = [
     ]
   },
   {
-    "id": "Box_Squat",
-    "name": "箱式深蹲",
-    "en": "Box Squat",
+    "id": "Barbell_Hack_Squat",
+    "name": "杠铃哈克深蹲",
+    "en": "Barbell Hack Squat",
     "part": "腿",
     "equipment": "杠铃",
     "level": "进阶",
@@ -1079,8 +1085,8 @@ export const EXERCISES: Exercise[] = [
       "lower-back"
     ],
     "tips": [
-      "坐到箱子上略停顿再起，能练髋部爆发和固定深度",
-      "别重重砸在箱子上卸力"
+      "杠铃放在身后、贴着腿后侧拉起，躯干尽量竖直 —— 这个角度股四头肌更吃力",
+      "别为了拉起而把上身往前趴，那样就变成硬拉了"
     ]
   },
   {
@@ -1403,6 +1409,7 @@ export const CARDIO_ACTIVITIES: CardioActivity[] = [
   },
   {
     "id": "Rowing_Stationary",
+    "hasLoop": false,
     "name": "划船机",
     "en": "Rowing, Stationary",
     "level": "进阶",
@@ -1423,6 +1430,7 @@ export const CARDIO_ACTIVITIES: CardioActivity[] = [
   },
   {
     "id": "Bicycling",
+    "hasLoop": false,
     "name": "户外骑行",
     "en": "Bicycling",
     "level": "入门",

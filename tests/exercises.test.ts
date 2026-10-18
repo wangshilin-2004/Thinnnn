@@ -33,26 +33,38 @@ test('有氧项目：id 不重复', () => {
   assert.equal(new Set(ids).size, ids.length, '有重复的 id');
 });
 
-test('每个无氧动作都有两张演示图', () => {
+test('每个无氧动作都有循环动画', () => {
   const missing: string[] = [];
   for (const exercise of EXERCISES) {
-    for (const frame of ['0.webp', '1.webp']) {
-      const path = join(IMAGE_ROOT, exercise.id, frame);
-      if (!existsSync(path)) missing.push(`${exercise.id}/${frame}`);
-    }
+    const path = join(IMAGE_ROOT, exercise.id, 'loop.webp');
+    if (!existsSync(path)) missing.push(`${exercise.id}/loop.webp`);
   }
-  assert.deepEqual(missing, [], `缺少图片：${missing.join('、')}`);
+  assert.deepEqual(missing, [], `缺少动画：${missing.join('、')}`);
 });
 
-test('每个有氧项目都有两张演示图', () => {
+test('有氧项目：有动画的必须有 loop.webp，标了没有的必须有两帧照片', () => {
   const missing: string[] = [];
   for (const activity of CARDIO_ACTIVITIES) {
-    for (const frame of ['0.webp', '1.webp']) {
-      const path = join(IMAGE_ROOT, activity.id, frame);
-      if (!existsSync(path)) missing.push(`${activity.id}/${frame}`);
+    if (activity.hasLoop === false) {
+      for (const frame of ['0.webp', '1.webp']) {
+        if (!existsSync(join(IMAGE_ROOT, activity.id, frame))) {
+          missing.push(`${activity.id}/${frame}`);
+        }
+      }
+    } else if (!existsSync(join(IMAGE_ROOT, activity.id, 'loop.webp'))) {
+      missing.push(`${activity.id}/loop.webp`);
     }
   }
-  assert.deepEqual(missing, [], `缺少图片：${missing.join('、')}`);
+  assert.deepEqual(missing, [], `缺少素材：${missing.join('、')}`);
+});
+
+test('只有明确标记的项目才允许没有动画', () => {
+  const withoutLoop = CARDIO_ACTIVITIES.filter((c) => c.hasLoop === false).map((c) => c.id);
+  assert.deepEqual(
+    withoutLoop.sort(),
+    ['Bicycling', 'Rowing_Stationary'],
+    'hasLoop=false 的项目变了 —— 要么补动画，要么同步改这条断言',
+  );
 });
 
 test('四个部位都有动作，且每条都挂在合法的部位上', () => {

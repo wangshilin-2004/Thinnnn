@@ -1,0 +1,36 @@
+动作演示动画的素材来源与许可
+================================
+
+public/exercises/<id>/loop.webp 是本仓库把下列数据集的 GIF 转成 WebP 后的产物
+（裁去白底、统一帧间隔、缩放至 300×300）。
+
+  数据集：Exercise GIFs
+  仓库：  https://github.com/omercotkd/exercises-gifs
+  许可：  MIT（原始 LICENSE 全文见下）
+
+动作的中文名、要领、肌群标签是本项目自己写的；肌群/器械/难度字段来自
+free-exercise-db（https://github.com/yuhonas/free-exercise-db ，Unlicense）。
+
+---- 原始 LICENSE ----
+
+MIT License
+
+Copyright (c) 2026 omercotkd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
