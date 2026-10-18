@@ -50,7 +50,7 @@ export function ExerciseAnim({
         height={300}
         loading="lazy"
         decoding="async"
-        className="h-full w-full object-contain dark:invert dark:hue-rotate-180"
+        className="h-full w-full object-contain"
       />
     </div>
   );
