@@ -274,7 +274,8 @@ function SessionSummary({ session }: { session: NonNullable<Awaited<ReturnType<t
         {[
           { label: '时长', value: `${minutes} 分钟` },
           { label: '总组数', value: `${totalSets} 组` },
-          { label: '总容量', value: `${Math.round(totalVolume)} kg` },
+          // 自重组装时容量恒为 0，直接写 0 kg 看着像算错了
+          { label: '总容量', value: totalVolume > 0 ? `${Math.round(totalVolume)} kg` : '自重' },
         ].map((item) => (
           <div key={item.label}>
             <p className="text-caption-1 text-ink-3">{item.label}</p>

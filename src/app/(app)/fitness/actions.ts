@@ -353,7 +353,9 @@ export async function finishSession(formData: FormData): Promise<void> {
     await tx.update(workoutSessions).set({ finishedAt: new Date() }).where(eq(workoutSessions.id, sessionId));
   });
   revalidatePath('/fitness');
-  redirect('/fitness?saved=1');
+  // 练完直接进回顾页：刚练完正是最想看「练了多久、总共多沉」的时刻。
+  // 以前回 /fitness 只弹一句「记下了」，回顾页要经过 回顾→那天→训练回顾 四跳才能到。
+  redirect(`/fitness/session/${sessionId}`);
 }
 
 export async function cancelSession(formData: FormData): Promise<void> {

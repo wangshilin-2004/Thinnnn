@@ -8,7 +8,7 @@ import { requireUser } from '@/lib/auth';
 import { formatCnDate } from '@/lib/calendar';
 import { addDays, todayInTimezone } from '@/lib/nutrition';
 import { deleteCardio, deleteStrength, startSession } from './actions';
-import { startPlan } from './actions';
+import { cancelSession, startPlan } from './actions';
 
 export const metadata: Metadata = { title: '训练' };
 
@@ -148,13 +148,29 @@ export default async function FitnessPage({
 
         <section className="flex flex-col gap-space-3">
           {active ? (
+            <div className="flex flex-col gap-space-2">
             <Link
               href={`/fitness/session/${active.id}`}
               className="glass flex items-center justify-between rounded-md p-space-4"
             >
-              <span className="text-subhead font-semibold text-ink">有一场训练没结束 · 继续</span>
+              <span className="flex min-w-0 flex-col">
+                <span className="text-subhead font-semibold text-ink">
+                  {active.part} · 有一场训练没结束
+                </span>
+                <span className="text-caption-1 text-ink-4">点进来继续，或者就地放弃</span>
+              </span>
               <span className="text-brand-text">→</span>
             </Link>
+            <form action={cancelSession}>
+              <input type="hidden" name="sessionId" value={active.id} />
+              <button
+                type="submit"
+                className="touch-target w-full rounded-md border border-separator bg-sunken py-space-2 text-caption-1 text-ink-3"
+              >
+                放弃这场训练
+              </button>
+            </form>
+            </div>
           ) : (
             <form action={startSession} className="glass rounded-md p-space-4">
               <input type="hidden" name="logDate" value={today} />

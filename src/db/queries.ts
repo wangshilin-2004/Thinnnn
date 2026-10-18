@@ -764,10 +764,10 @@ export type SessionDetail = {
 export async function getActiveSession(
   userId: string,
   date: string,
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; part: string; startedAt: Date } | null> {
   return withUser(userId, async (tx) => {
     const [row] = await tx
-      .select({ id: workoutSessions.id })
+      .select({ id: workoutSessions.id, part: workoutSessions.part, startedAt: workoutSessions.startedAt })
       .from(workoutSessions)
       .where(
         and(
