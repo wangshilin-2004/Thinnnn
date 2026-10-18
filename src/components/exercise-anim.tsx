@@ -39,6 +39,10 @@ export function ExerciseAnim({
       className={`relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-md bg-[radial-gradient(circle_at_50%_45%,#2b2b2f_0%,#1c1c1e_72%)] ${className}`}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
+      {/* 插画本身是「白底 + 白色人体 + 红色肌肉」。放到暗色主题上时，
+          白色的边缘在深色卡片上就是一圈刺眼的白锯齿 —— 那不是抠图没抠干净，
+          而是人体本身就是白的。invert 让它变成深色人体，hue-rotate(180)
+          把反转后变青的肌肉再转回红色。亮色主题保持原样。 */}
       <img
         src={`/exercises/${id}/loop.webp`}
         alt={`${name} 的动作示意，红色是这个动作训练的肌群`}
@@ -46,7 +50,7 @@ export function ExerciseAnim({
         height={300}
         loading="lazy"
         decoding="async"
-        className="h-full w-full object-contain"
+        className="h-full w-full object-contain dark:invert dark:hue-rotate-180"
       />
     </div>
   );
