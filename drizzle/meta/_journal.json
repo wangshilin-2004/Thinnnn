@@ -71,6 +71,13 @@
       "when": 1792310000000,
       "tag": "0009_fitness_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792305482587,
+      "tag": "0010_username_and_friends",
+      "breakpoints": true
     }
   ]
 }

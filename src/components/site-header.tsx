@@ -56,6 +56,31 @@ export function SiteHeader() {
               开始记录
             </span>
           </Link>
+          {/* 好友入口做成纯图标：顶栏在 320px 上已经只剩几十像素余量，
+              再加一个「好友」文字会把「开始记录」挤到换行。
+              图标 20px + 44px 可点区域，视觉上不抢戏。 */}
+          <Link
+            href="/friends"
+            aria-label="好友"
+            className="inline-flex h-11 w-11 items-center justify-center text-ink-2 transition-colors hover:text-ink"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="9" cy="8" r="3.2" />
+              <path d="M2.8 19.2c0-3.1 2.8-5.2 6.2-5.2s6.2 2.1 6.2 5.2" />
+              <path d="M16.4 5.2a3 3 0 0 1 0 5.8" />
+              <path d="M17.6 14.2c2.2.5 3.6 2.1 3.6 4.3" />
+            </svg>
+          </Link>
           <Link
             href="/settings"
             aria-label="设置"

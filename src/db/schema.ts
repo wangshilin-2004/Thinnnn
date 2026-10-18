@@ -87,6 +87,16 @@ export const profiles = pgTable(
 
     displayName: text('display_name').notNull().default(''),
 
+    // ── 社交身份（迁移 0010）───────────────────────────────
+    // 加好友靠它，不用邮箱。格式在数据库里用 CHECK 钉死：
+    // 3–20 位小写字母/数字/下划线，首字符必须是字母。
+    username: text('username'),
+
+    // 好友能看到我的什么。默认开 —— 「接受好友申请」本身就是同意，
+    // 默认关的话加完好友两边都是空的，看起来像坏了。
+    shareMeals: boolean('share_meals').notNull().default(true),
+    shareTraining: boolean('share_training').notNull().default(true),
+
     // 关键字段：用户在哪个时区。所有「今天是几号」的计算都依赖它。
     // 详见 docs/04 §10 —— Vercel 服务器跑在 UTC，不处理时区会把
     // 北京时间早上的早餐记到昨天去。
@@ -628,6 +638,25 @@ export const strengthEntries = pgTable(
 // ═══════════════════════════════════════════════════════════════
 //  Drizzle 的核心卖点之一：类型从 schema 自动推导，不需要手写
 //  interface，也就不可能出现「数据库改了但 TS 类型没改」的漂移。
+// ── 好友关系（迁移 0010）───────────────────────────────────────────────
+// 双向申请-接受模型。A→B 和 B→A 不能同时存在，靠迁移里的
+// least/greatest 唯一索引保证（应用层「先查有没有反向申请」是竞态）。
+export const friendships = pgTable(
+  'friendships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requesterId: uuid('requester_id').notNull(),
+    addresseeId: uuid('addressee_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('friendships_status_check', sql`${t.status} in ('pending', 'accepted', 'declined')`),
+    check('friendships_not_self', sql`${t.requesterId} <> ${t.addresseeId}`),
+  ],
+);
+
 //
 //  $inferSelect = 查询出来的行的类型
 //  $inferInsert = 插入时允许传入的类型（有 DEFAULT 的列可省略）
@@ -658,3 +687,6 @@ export type NewCardioSession = typeof cardioSessions.$inferInsert;
 
 export type StrengthEntry = typeof strengthEntries.$inferSelect;
 export type NewStrengthEntry = typeof strengthEntries.$inferInsert;
+
+export type Friendship = typeof friendships.$inferSelect;
+export type NewFriendship = typeof friendships.$inferInsert;

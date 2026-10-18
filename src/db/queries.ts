@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, desc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 
 import { withUser } from '@/db';
 import {
@@ -490,5 +490,124 @@ export async function getFitnessSince(
         .where(and(eq(strengthEntries.userId, userId), gte(strengthEntries.logDate, from))),
     ]);
     return { cardio, strength };
+  });
+}
+
+/* ── 好友（迁移 0010）────────────────────────────────────────────────
+ *
+ * 这一层有个容易写错的地方：所有访客视角的查询都要用【我】的身份去跑，
+ * 只是把 where 换成对方 —— 不能拿对方的 id 去 withUser()。
+ * 用对方的身份跑查询，等于把对方的权限借给自己用，RLS 就形同虚设了。
+ * 正确姿势：withUser(me) + where user_id = peer，能不能看到由数据库决定。
+ */
+
+export type FriendLink = {
+  /** friendships 那一行的 id —— 接受/删除/撤回都要用它 */
+  linkId: string;
+  peerId: string;
+  username: string | null;
+  displayName: string;
+  status: 'pending' | 'accepted' | 'declined';
+  since: string;
+  direction: 'in' | 'out';
+};
+
+export async function getMyLinks(viewerId: string): Promise<FriendLink[]> {
+  return withUser(viewerId, async (tx) => {
+    const res = await tx.execute(sql`select * from public.list_my_links()`);
+    return (Array.from(res) as unknown as Record<string, unknown>[]).map((r) => ({
+      linkId: String(r.link_id),
+      peerId: String(r.peer_id),
+      username: (r.username as string | null) ?? null,
+      displayName: (r.display_name as string | null) ?? '',
+      status: r.status as FriendLink['status'],
+      since: new Date(r.since as string).toISOString(),
+      direction: r.direction as 'in' | 'out',
+    }));
+  });
+}
+
+export async function findUserByUsername(viewerId: string, username: string) {
+  return withUser(viewerId, async (tx) => {
+    const res = await tx.execute(
+      sql`select * from public.find_user_by_username(${username})`,
+    );
+    const row = (Array.from(res) as unknown as Record<string, unknown>[])[0];
+    if (!row) return null;
+    return {
+      peerId: String(row.peer_id),
+      username: (row.username as string | null) ?? '',
+      displayName: (row.display_name as string | null) ?? '',
+    };
+  });
+}
+
+/** 好友这一天吃了什么。能不能看到由 RLS 决定，看不到就是空数组。 */
+export async function getFriendMeals(viewerId: string, peerId: string, date: string) {
+  return withUser(viewerId, async (tx) => {
+    const rows = await tx
+      .select({
+        id: mealItems.id,
+        mealType: mealItems.mealType,
+        foodName: mealItems.foodName,
+        quantityG: mealItems.quantityG,
+        servingLabel: mealItems.servingLabel,
+        kcal: mealItems.kcal,
+        proteinG: mealItems.proteinG,
+        fatG: mealItems.fatG,
+        carbG: mealItems.carbG,
+      })
+      .from(mealItems)
+      .where(and(eq(mealItems.userId, peerId), eq(mealItems.logDate, date)))
+      .orderBy(asc(mealItems.loggedAt));
+
+    return rows.map((r) => ({
+      id: r.id,
+      mealType: r.mealType as MealType,
+      foodName: r.foodName,
+      quantityG: num(r.quantityG),
+      servingLabel: r.servingLabel,
+      kcal: num(r.kcal),
+      proteinG: num(r.proteinG),
+      fatG: num(r.fatG),
+      carbG: num(r.carbG),
+    }));
+  });
+}
+
+/** 好友最近几天的训练。同样靠 RLS 兜底。 */
+export async function getFriendFitness(viewerId: string, peerId: string, from: string) {
+  return withUser(viewerId, async (tx) => {
+    const [cardio, strength] = await Promise.all([
+      tx
+        .select({
+          date: cardioSessions.logDate,
+          activityName: cardioSessions.activityName,
+          minutes: cardioSessions.minutes,
+          intensity: cardioSessions.intensity,
+        })
+        .from(cardioSessions)
+        .where(and(eq(cardioSessions.userId, peerId), gte(cardioSessions.logDate, from)))
+        .orderBy(desc(cardioSessions.logDate)),
+      tx
+        .select({
+          date: strengthEntries.logDate,
+          exerciseName: strengthEntries.exerciseName,
+          part: strengthEntries.part,
+          sets: strengthEntries.sets,
+          reps: strengthEntries.reps,
+          weightKg: strengthEntries.weightKg,
+        })
+        .from(strengthEntries)
+        .where(and(eq(strengthEntries.userId, peerId), gte(strengthEntries.logDate, from)))
+        .orderBy(desc(strengthEntries.logDate)),
+    ]);
+    return {
+      cardio: cardio.map((c) => ({ ...c, minutes: c.minutes })),
+      strength: strength.map((s) => ({
+        ...s,
+        weightKg: s.weightKg === null ? null : num(s.weightKg),
+      })),
+    };
   });
 }

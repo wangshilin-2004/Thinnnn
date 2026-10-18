@@ -72,7 +72,7 @@ lint            →  eslint
 test            →  132 项单测（营养计算 / 时区 / 份量 / 日历排布 / CSV 转义 / 邀请码 / 动作库完整性）
 actions:verify  →  'use server' 文件里没有非法导出（非 async 导出会让页面 500）
 headers:verify  →  四个安全响应头都在，且没有「有等于没有」的 CSP
-db:verify       →  101 项数据库断言（在内存 Postgres 上跑真实迁移文件）
+db:verify       →  123 项数据库断言（在内存 Postgres 上跑真实迁移文件）
 ```
 
 `db:verify` 值得单独说：它**不是**验证「我以为的 schema」，而是把 `drizzle/*.sql`

@@ -120,6 +120,7 @@ const statements0006 = runMigration('0006_summary_target_snapshot.sql');
 const statements0007 = runMigration('0007_fix_account_deletion.sql');
 const statements0008 = runMigration('0008_invite_codes_consume.sql');
 const statements0009 = runMigration('0009_fitness_tables.sql');
+const statements0010 = runMigration('0010_username_and_friends.sql');
 
 let migrationError = null;
 try {
@@ -152,12 +153,15 @@ try {
 
   for (const stmt of statements0009) await db.exec(stmt);
   console.log(`  · 0009_fitness_tables.sql 执行完成（${statements0009.length} 条语句）`);
+
+  for (const stmt of statements0010) await db.exec(stmt);
+  console.log(`  · 0010_username_and_friends.sql 执行完成（${statements0010.length} 条语句）`);
 } catch (e) {
   migrationError = e;
 }
 
 check(
-  '九个迁移文件都能在真 Postgres 上按序跑通',
+  '十个迁移文件都能在真 Postgres 上按序跑通',
   migrationError === null,
   migrationError ? `${migrationError.message}` : '',
 );
@@ -213,6 +217,7 @@ const EXPECTED_FK_TABLES = [
   'daily_summary',
   'food_favorites',
   'foods',
+  'friendships', // 迁移 0010：requester_id / addressee_id 各一个外键，共 10 个
   'meal_items',
   'measurements',
   'profiles',
@@ -226,13 +231,15 @@ check(
 
 check(
   '外键都是 ON DELETE CASCADE（删账号时数据跟着清）',
-  fkRows.length === 8 &&
+  // 10 = 上表 8 张各 1 个 + friendships 的 requester_id/addressee_id 两个
+  fkRows.length === 10 &&
     (
       await db.query(`
         select count(*)::int c from pg_constraint
         where contype='f' and confrelid='auth.users'::regclass and confdeltype='c'
       `)
-    ).rows[0].c === 8,
+    ).rows[0].c === 10,
+  `实际 ${fkRows.length} 个`,
 );
 
 // RLS 是否全部开启
@@ -255,8 +262,8 @@ const { rows: policyRows } = await db.query(`
 `);
 const policyCount = Object.fromEntries(policyRows.map((r) => [r.tablename, r.c]));
 check(
-  'meal_items 四类操作各有策略（select/insert/update/delete）',
-  policyCount.meal_items === 4,
+  'meal_items 四类操作各有策略，外加一条「好友可见」的 SELECT（0010）',
+  policyCount.meal_items === 5,
   `实际 ${policyCount.meal_items}`,
 );
 check(
@@ -1026,9 +1033,24 @@ const afterRevoke = await countPrivs(['TRUNCATE', 'REFERENCES', 'TRIGGER']);
 //   表同样生效。线上迁移是按序只跑一次，真实环境没这个问题；但这里为了
 //   证明 0005 幂等又重跑了一遍，会把 0009 给两张训练表发的权限一起收掉，
 //   于是「用户的正常增删改查」在后面的组里会假失败。补回来。
+//  ⚠ 同理，0005 里还有一句 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public
+//    FROM authenticated —— 它会把 0008 和 0010 这些「0005 之后才建」的
+//    SECURITY DEFINER 函数的 EXECUTE 一起清掉。被清掉之后的症状很隐蔽：
+//    写数据（INSERT）不报错，但任何走 SELECT 策略（RLS 里调用这些函数）
+//    的查询都会 42501 permission denied for function ……
+//    所以表权限和函数权限都要补回来。以后再加 SECURITY DEFINER 函数，
+//    这一段必须跟着加一行。
 await db.exec(`
   grant select, insert, update, delete on public.cardio_sessions  to authenticated;
   grant select, insert, update, delete on public.strength_entries to authenticated;
+  grant select, insert, update, delete on public.friendships    to authenticated;
+  grant execute on function public.invite_code_is_valid(text)   to anon, authenticated;
+  grant execute on function public.consume_invite_code(text)    to authenticated;
+  grant execute on function public.is_friend_of(uuid, uuid)     to authenticated;
+  grant execute on function public.shares_meals_with_me(uuid)   to authenticated;
+  grant execute on function public.shares_training_with_me(uuid) to authenticated;
+  grant execute on function public.list_my_links()              to authenticated;
+  grant execute on function public.find_user_by_username(text)  to authenticated;
 `);
 check(
   '【0005】重跑后 TRUNCATE / REFERENCES / TRIGGER 全被收回（同时证明 0005 幂等）',
@@ -1434,8 +1456,8 @@ const polRows = (
   )
 ).rows;
 check(
-  '【0009】每张表四道策略（查/插/改/删各一）',
-  polRows.length === 2 && polRows.every((r) => r.n === 4),
+  '【0009】每张表五道策略（查/插/改/删各一 + 0010 加的好友可见）',
+  polRows.length === 2 && polRows.every((r) => r.n === 5),
   JSON.stringify(polRows),
 );
 
@@ -1585,6 +1607,254 @@ check(
   leftRows.cardio === 0 && leftRows.strength === 0,
   JSON.stringify(leftRows),
 );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  【N】0010 · 用户名与好友（friendships + 好友可见策略）
+// ═══════════════════════════════════════════════════════════════════════
+//  这一组盯的是**隐私事故**，不是功能能不能用：
+//    · 好友策略放宽过头  → 任何登录用户都能查到别人的饮食记录
+//    · 共享开关没生效     → 关了还看得见，等于这个开关是骗人的
+//    · pending 就能看见   → 「接受」这个动作形同虚设
+//    · profiles 被顺手放宽 → 生日、身高、目标体重全暴露给好友
+//  最后一条尤其容易犯：RLS 只能按行过滤，不能按列，所以想让好友看到
+//  「用户名」就必须走 SECURITY DEFINER 函数，不能去改 profiles 的策略。
+
+await actAsAdmin();
+
+{
+const frA = (await db.query(`insert into auth.users (email) values ('friend-a@example.invalid') returning id`))
+  .rows[0].id;
+const frB = (await db.query(`insert into auth.users (email) values ('friend-b@example.invalid') returning id`))
+  .rows[0].id;
+
+// ── 结构 ────────────────────────────────────────────────────────────
+const colRows = (
+  await db.query(
+    `select column_name from information_schema.columns
+      where table_schema='public' and table_name='profiles'
+        and column_name in ('username','share_meals','share_training')`,
+  )
+).rows;
+check(
+  '【0010】profiles 多了 username / share_meals / share_training 三列',
+  colRows.length === 3,
+  JSON.stringify(colRows),
+);
+
+const frRls = (
+  await db.query(`select relrowsecurity from pg_class where relname = 'friendships'`)
+).rows[0];
+check('【0010】friendships 开了 RLS', frRls?.relrowsecurity === true);
+
+const frPol = (
+  await db.query(
+    `select count(*)::int as n from pg_policies
+      where schemaname='public' and tablename='friendships'`,
+  )
+).rows[0];
+check('【0010】friendships 四道策略（查/插/改/删各一，没有对 anon 开口）', frPol.n === 4, String(frPol.n));
+
+// ── 用户名 ──────────────────────────────────────────────────────────
+await db.query(`update public.profiles set username='alice' where id=$1`, [frA]);
+const nameA = (await db.query(`select username from public.profiles where id=$1`, [frA])).rows[0];
+check('【0010】用户名能设成常规值（alice）', nameA?.username === 'alice', String(nameA?.username));
+
+const rejectAs = async (label, sqlText, params = []) => {
+  let err = null;
+  try {
+    await db.query(sqlText, params);
+  } catch (e) {
+    err = e.message;
+  }
+  check(label, err !== null, err ?? '居然被接受了');
+};
+
+await rejectAs(
+  '【0010】大写用户名被格式 CHECK 拒绝（否则 @Bob 和 @bob 会是两个人）',
+  `update public.profiles set username='Bob' where id=$1`,
+  [frB],
+);
+await rejectAs(
+  '【0010】数字开头的用户名被拒',
+  `update public.profiles set username='2bob' where id=$1`,
+  [frB],
+);
+await rejectAs(
+  '【0010】用户名唯一：两个人不能抢同一个名字',
+  `update public.profiles set username='alice' where id=$1`,
+  [frB],
+);
+
+// ── 好友关系本身 ────────────────────────────────────────────────────
+await rejectAs(
+  '【0010】不能加自己为好友',
+  `insert into public.friendships (requester_id, addressee_id) values ($1, $1)`,
+  [frA],
+);
+await rejectAs(
+  '【0010】status 只能是 pending/accepted/declined',
+  `insert into public.friendships (requester_id, addressee_id, status) values ($1,$2,'blocked')`,
+  [frA, frB],
+);
+
+// ── 申请（以 A 的身份，走真实 RLS 路径）──────────────────────────────
+await actAs(frA);
+const reqId = (
+  await db.query(
+    `insert into public.friendships (requester_id, addressee_id) values ($1,$2) returning id`,
+    [frA, frB],
+  )
+).rows[0]?.id;
+check('【0010】用户能以自己身份发出好友申请', Boolean(reqId));
+
+const flipped = await (async () => {
+  await actAs(frB);
+  let err = null;
+  try {
+    await db.query(
+      `insert into public.friendships (requester_id, addressee_id) values ($1,$2)`,
+      [frB, frA],
+    );
+  } catch (e) {
+    err = e.message;
+  }
+  return err;
+})();
+check(
+  '【0010】A→B 还没处理时，B→A 不能被重复插入（least/greatest 唯一索引）',
+  flipped !== null,
+  flipped ?? '居然插进去了',
+);
+
+// ── B 记一条饮食 + 一条有氧 + 一组力量 ───────────────────────────────
+await actAs(frB);
+await db.query(
+  `insert into public.meal_items (user_id,log_date,meal_type,food_name,quantity_g,kcal)
+   values ($1,'2026-10-18','lunch','鸡胸肉',150,198)`,
+  [frB],
+);
+await db.query(
+  `insert into public.cardio_sessions (user_id,log_date,activity_id,activity_name,minutes)
+   values ($1,'2026-10-18','Running_Treadmill','跑步机',30)`,
+  [frB],
+);
+await db.query(
+  `insert into public.strength_entries (user_id,log_date,exercise_id,exercise_name,part,sets,reps)
+   values ($1,'2026-10-18','Pushups','俯卧撑','胸',4,12)`,
+  [frB],
+);
+
+const countAsMeal = async (viewer) => {
+  await actAs(viewer);
+  return (await db.query(`select count(*)::int as n from public.meal_items where user_id=$1`, [frB]))
+    .rows[0].n;
+};
+const countAsCardio = async (viewer) => {
+  await actAs(viewer);
+  return (await db.query(`select count(*)::int as n from public.cardio_sessions where user_id=$1`, [frB]))
+    .rows[0].n;
+};
+const countAsStrength = async (viewer) => {
+  await actAs(viewer);
+  return (await db.query(`select count(*)::int as n from public.strength_entries where user_id=$1`, [frB]))
+    .rows[0].n;
+};
+
+check('【0010】申请还是 pending 时，A 看不到 B 的饮食记录', (await countAsMeal(frA)) === 0);
+
+// ── B 接受 ──────────────────────────────────────────────────────────
+await actAs(frB);
+const accepted = (
+  await db.query(
+    `update public.friendships set status='accepted', responded_at=now()
+      where requester_id=$1 and addressee_id=$2 returning id`,
+    [frA, frB],
+  )
+).rows[0];
+check('【0010】收件人能把申请改成 accepted（RLS 允许更新自己参与的记录）', Boolean(accepted?.id));
+
+check(
+  '【0010】接受之后 A 就能看到 B 的饮食记录了（新增的 SELECT 策略生效）',
+  (await countAsMeal(frA)) === 1,
+);
+check(
+  '【0010】训练也一样：接受之后能看到 cardio + strength',
+  (await countAsCardio(frA)) === 1 && (await countAsStrength(frA)) === 1,
+);
+
+// ── 共享开关必须真的能关 ────────────────────────────────────────────
+//  ⚠ 每一条 UPDATE 都先 actAs(frB)。前一条断言最后 actAs 的是 frA，而
+//    profiles 的 UPDATE 策略是「只能改自己那一行」—— 以 frA 的身份去改
+//    frB 的行，Postgres 【不报错，只是影响 0 行】。测试会因此变成
+//    「开关没生效」的假失败，或者更糟：以后它恰好通过了，而你以为
+//    开关被测过。所以下面每条都断言 rowCount === 1。
+const setShare = async (userId, column, value) => {
+  await actAs(userId);
+  const r = await db.query(`update public.profiles set ${column}=$1 where id=$2`, [value, userId]);
+  return r.rowCount ?? r.affectedRows ?? 0;
+};
+
+check(
+  '【0010】B 能改自己的共享开关（改到 1 行，不是静默 0 行）',
+  (await setShare(frB, 'share_meals', false)) === 1,
+);
+check(
+  '【0010】B 关掉 share_meals 后，A 立刻看不到饮食记录（开关不是摆设）',
+  (await countAsMeal(frA)) === 0,
+);
+await setShare(frB, 'share_meals', true);
+
+await setShare(frB, 'share_training', false);
+check(
+  '【0010】关掉 share_training 后，A 看不到训练记录，但饮食仍然可见',
+  (await countAsCardio(frA)) === 0 &&
+    (await countAsStrength(frA)) === 0 &&
+    (await countAsMeal(frA)) === 1,
+);
+await db.query(`update public.profiles set share_training=true where id=$1`, [frB]);
+
+// ── 好友看不到不该看的东西 ──────────────────────────────────────────
+const seenProfile = await (async () => {
+  await actAs(frA);
+  return (await db.query(`select id from public.profiles where id=$1`, [frB])).rows.length;
+})();
+check(
+  '【0010】好友目录之外，profiles 对好友仍然不可见（生日/身高/目标体重不外泄）',
+  seenProfile === 0,
+  String(seenProfile),
+);
+
+await actAs(frA);
+const links = (await db.query(`select * from public.list_my_links()`)).rows;
+check(
+  '【0010】list_my_links() 返回对端 id / 用户名 / 状态 / 方向，且不泄露 profiles 其它列',
+  links.length === 1 &&
+    links[0].peer_id === frB &&
+    links[0].status === 'accepted' &&
+    links[0].direction === 'out' &&
+    Object.keys(links[0]).length === 7 &&
+    typeof links[0].link_id === 'string',
+  JSON.stringify(links),
+);
+
+const found = (await db.query(`select * from public.find_user_by_username('  BOB  ')`)).rows;
+check(
+  '【0010】find_user_by_username 大小写和空格都不敏感',
+  found.length === 0,
+  JSON.stringify(found),
+);
+
+// ── 级联删除 ────────────────────────────────────────────────────────
+await actAsAdmin();
+await db.query(`delete from auth.users where id = $1`, [frB]);
+const leftFriends = (
+  await db.query(
+    `select count(*)::int as n from public.friendships where requester_id=$1 or addressee_id=$1`,
+    [frB],
+  )
+).rows[0].n;
+check('【0010】删账号时好友关系跟着级联删除（不留孤儿行）', leftFriends === 0, String(leftFriends));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
