@@ -6,6 +6,7 @@ import { MEAL_LABELS } from '@/db/queries';
 import type { MealType } from '@/db/queries';
 import {
   getFitnessForDate,
+  getSessionsForDate,
   getMealsForDate,
   getProfile,
   getWeightSeries,
@@ -92,11 +93,12 @@ export default async function DayPage({
   // 未来的日子不可能有记录，看它没有意义。
   if (date > today) notFound();
 
-  const [profile, meals, weights, fitness] = await Promise.all([
+  const [profile, meals, weights, fitness, sessions] = await Promise.all([
     getProfile(user.id),
     getMealsForDate(user.id, date),
     getWeightSeries(user.id, date, date),
     getFitnessForDate(user.id, date),
+    getSessionsForDate(user.id, date),
   ]);
 
   const weightKg = weights[0]?.kg ?? null;
@@ -210,6 +212,22 @@ export default async function DayPage({
           {/* 训练 ────────────────────────────────────────────────
               和饮食并列，不塞进「摄入」那张卡：训练是消耗，不是摄入，
               混在一张卡里会让人以为「练了就能多吃」是等式。 */}
+          {sessions.length > 0 && (
+            <section className="flex flex-col gap-2 rounded-xl bg-card p-5">
+              <h2 className="text-headline font-semibold text-ink">那天的训练</h2>
+              {sessions.map((session) => (
+                <Link
+                  key={session.id}
+                  href={`/fitness/session/${session.id}`}
+                  className="touch-target flex items-center justify-between rounded-xl bg-sunken px-4 py-3 text-subhead text-ink"
+                >
+                  <span>{session.part} · 训练回顾</span>
+                  <span className="text-brand-text">›</span>
+                </Link>
+              ))}
+            </section>
+          )}
+
           {(fitness.cardio.length > 0 || fitness.strength.length > 0) && (
             <section className="flex flex-col gap-3 rounded-xl bg-card p-5">
               <div className="flex items-baseline justify-between gap-4">

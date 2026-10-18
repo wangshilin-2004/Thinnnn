@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 
 import { withUser } from '@/db';
 import {
@@ -840,4 +840,25 @@ export async function getSessionDetail(
       })),
     };
   });
+}
+
+/* 某一天有哪些训练会话（用于从「回顾 → 某天」跳进当时的训练回顾）。
+ * 只取已结束的：进行中的会话属于「正在做」，不该出现在历史里。 */
+export async function getSessionsForDate(
+  userId: string,
+  date: string,
+): Promise<{ id: string; part: string }[]> {
+  return withUser(userId, async (tx) =>
+    tx
+      .select({ id: workoutSessions.id, part: workoutSessions.part })
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.userId, userId),
+          eq(workoutSessions.logDate, date),
+          isNotNull(workoutSessions.finishedAt),
+        ),
+      )
+      .orderBy(desc(workoutSessions.startedAt)),
+  );
 }
