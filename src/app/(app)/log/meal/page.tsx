@@ -111,6 +111,15 @@ export default async function LogMealPage({
         defaultMealType={defaultMealType}
         mealLabels={MEAL_LABELS}
         targetKcal={profile?.targetKcal ?? null}
+        targets={
+          profile?.targetProteinG && profile?.targetFatG && profile?.targetCarbG
+            ? {
+                proteinG: Number(profile.targetProteinG),
+                fatG: Number(profile.targetFatG),
+                carbG: Number(profile.targetCarbG),
+              }
+            : null
+        }
       />
 
       <p className="prose-measure mt-space-8 text-caption-1 text-ink-3">

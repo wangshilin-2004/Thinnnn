@@ -120,6 +120,7 @@ export function MealLogger({
   defaultMealType,
   mealLabels,
   targetKcal,
+  targets,
 }: {
   catalog: PickerFood[];
   recent: RecentFood[];
@@ -131,6 +132,8 @@ export function MealLogger({
   defaultMealType: MealType;
   mealLabels: Record<MealType, string>;
   targetKcal: number | null;
+  /** 三大营养素目标（克）。没算过目标时为 null。 */
+  targets: { proteinG: number; fatG: number; carbG: number } | null;
 }) {
   const [mealType, setMealType] = useState<MealType>(defaultMealType);
   const [query, setQuery] = useState('');
@@ -221,6 +224,15 @@ export function MealLogger({
   const shownFoods = categories.find(([c]) => c === shownCategory)?.[1] ?? [];
 
   const eatenToday = optimistic.reduce((sum, m) => sum + m.kcal, 0);
+  // 三大营养素累计：记一餐页以前只有热量，想知道「蛋白还差多少」得回首页看。
+  const macros = optimistic.reduce(
+    (acc, m) => ({
+      proteinG: acc.proteinG + m.proteinG,
+      fatG: acc.fatG + m.fatG,
+      carbG: acc.carbG + m.carbG,
+    }),
+    { proteinG: 0, fatG: 0, carbG: 0 },
+  );
   const remaining = targetKcal === null ? null : targetKcal - eatenToday;
 
   function handleAdd(food: PickerFood) {
@@ -329,7 +341,15 @@ export function MealLogger({
               : `超出 ${Math.round(-remaining).toLocaleString('zh-CN')} kcal`}
           </span>
         )}
-      </div>
+      
+
+          {targets && (
+            <p className="mt-space-1 text-caption-1 text-ink-4">
+              蛋白 {Math.round(macros.proteinG)}/{Math.round(targets.proteinG)} g · 碳水{' '}
+              {Math.round(macros.carbG)}/{Math.round(targets.carbG)} g · 脂肪{' '}
+              {Math.round(macros.fatG)}/{Math.round(targets.fatG)} g
+            </p>
+          )}</div>
 
       {/* ── 搜索 ─────────────────────────────────────────────── */}
       <div className="relative">
