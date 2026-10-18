@@ -1,3 +1,4 @@
+import { PLANS, estimateMinutes } from '@/content/templates';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -7,6 +8,7 @@ import { requireUser } from '@/lib/auth';
 import { formatCnDate } from '@/lib/calendar';
 import { addDays, todayInTimezone } from '@/lib/nutrition';
 import { deleteCardio, deleteStrength, startSession } from './actions';
+import { startPlan } from './actions';
 
 export const metadata: Metadata = { title: '训练' };
 
@@ -112,6 +114,38 @@ export default async function FitnessPage({
         </section>
 
         {/* 今日明细 */}
+        {!active && (
+          <section className="flex flex-col gap-space-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-headline font-semibold text-ink">推荐方案</h2>
+              <span className="text-caption-1 text-ink-4">不用自己想练什么</span>
+            </div>
+            {PLANS.map((plan) => (
+              <form
+                key={plan.id}
+                action={startPlan}
+                className="glass flex items-center justify-between gap-space-3 rounded-md p-space-4"
+              >
+                <input type="hidden" name="planId" value={plan.id} />
+                <input type="hidden" name="logDate" value={today} />
+                <div className="flex min-w-0 flex-col">
+                  <span className="text-subhead font-semibold text-ink">{plan.name}</span>
+                  <span className="truncate text-caption-1 text-ink-4">{plan.subtitle}</span>
+                  <span className="mt-space-1 text-caption-1 text-ink-3">
+                    {plan.size} 个动作 · {plan.sets} 组 × {plan.reps} 次 · 约 {estimateMinutes(plan)} 分钟
+                  </span>
+                </div>
+                <button
+                  type="submit"
+                  className="touch-target shrink-0 rounded-md bg-brand px-space-5 text-subhead font-semibold text-on-accent"
+                >
+                  开练
+                </button>
+              </form>
+            ))}
+          </section>
+        )}
+
         <section className="flex flex-col gap-space-3">
           {active ? (
             <Link
@@ -124,7 +158,7 @@ export default async function FitnessPage({
           ) : (
             <form action={startSession} className="glass rounded-md p-space-4">
               <input type="hidden" name="logDate" value={today} />
-              <p className="text-subhead font-semibold text-ink">开始一场训练</p>
+              <p className="text-subhead font-semibold text-ink">或者自己排一场</p>
               <p className="mt-space-1 text-footnote text-ink-3">
                 选今天练哪儿 —— 进去之后排动作、按组计时，练完自动记进今天的训练记录。
               </p>

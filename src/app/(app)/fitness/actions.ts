@@ -9,6 +9,7 @@ import { withUser } from '@/db';
 import { cardioSessions, strengthEntries, workoutExercises, workoutSessions, workoutSets } from '@/db/schema';
 import { requireUser } from '@/lib/auth';
 import { findCardio, findExercise } from '@/content/exercises';
+import { findPlan, planExercises } from '@/content/templates';
 
 /* 训练记录的写入路径。
  *
@@ -364,4 +365,40 @@ export async function cancelSession(formData: FormData): Promise<void> {
   });
   revalidatePath('/fitness');
   redirect('/fitness');
+}
+
+/* 从推荐方案一键开练：建会话 + 把方案里的动作按顺序排进去。 */
+export async function startPlan(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const parsed = z
+    .object({
+      planId: z.string().trim().min(1).max(40),
+      logDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    })
+    .safeParse({ planId: formData.get('planId'), logDate: formData.get('logDate') });
+  if (!parsed.success) redirect('/fitness?error=1');
+  const plan = findPlan(parsed.data.planId);
+  if (!plan) redirect('/fitness?error=1');
+
+  const exercises = planExercises(plan);
+  const id = await withUser(user.id, async (tx) => {
+    const [row] = await tx
+      .insert(workoutSessions)
+      .values({ userId: user.id, logDate: parsed.data.logDate, part: plan.part, title: plan.name })
+      .returning({ id: workoutSessions.id });
+    await tx.insert(workoutExercises).values(
+      exercises.map((e, i) => ({
+        sessionId: row.id,
+        exerciseId: e.id,
+        exerciseName: e.name,
+        position: i,
+        targetSets: plan.sets,
+        targetReps: plan.reps,
+        restSeconds: plan.rest,
+      })),
+    );
+    return row.id;
+  });
+  revalidatePath('/fitness');
+  redirect(`/fitness/session/${id}`);
 }
