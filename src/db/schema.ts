@@ -130,6 +130,10 @@ export const profiles = pgTable(
     targetCarbG: numeric('target_carb_g', { precision: 5, scale: 1 }),
     targetFatG: numeric('target_fat_g', { precision: 5, scale: 1 }),
 
+    /* 每日喝水目标（mL）。NULL = 用户没改过，由 src/lib/water.ts
+     * 按体重现算（约 33 mL/kg）。存下来之后就不再随体重波动跳。 */
+    waterGoalMl: integer('water_goal_ml'),
+
     // 公式版本号。营养学公式会更新（Mifflin-St Jeor 未必永远是最好
     // 的选择），存版本号将来能批量找出"哪些用户的目标是旧公式算的"。
     calcVersion: text('calc_version').notNull().default('v1'),
@@ -754,3 +758,37 @@ export type WorkoutExercise = typeof workoutExercises.$inferSelect;
 export type NewWorkoutExercise = typeof workoutExercises.$inferInsert;
 export type WorkoutSet = typeof workoutSets.$inferSelect;
 export type NewWorkoutSet = typeof workoutSets.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════
+//  15. water_logs —— 喝水流水（0013）
+// ═══════════════════════════════════════════════════════════════
+//  为什么是「流水」而不是「每天一行汇总」：
+//    · 用户一天会喝很多次，每次都点一下比「先算总量再填」自然；
+//    · 撤销最后一次（点错了）需要知道是哪一条；
+//    · 将来做「上午喝得少」这类分析，只有流水能回答。
+//
+//  只存 mL 整数。L 是显示层的事（formatWater 负责 1800 → "1.8 L"），
+//  库里存 L 会引入小数和精度问题。
+//
+//  为什么单独存 log_date：用户时区是 Asia/Shanghai，深夜 23:50 和
+//  凌晨 00:10 属于两天，从 logged_at 推导会算错天。
+
+export const waterLogs = pgTable(
+  'water_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    // 外键 → auth.users(id) ON DELETE CASCADE，在 0013 迁移里手写添加
+    userId: uuid('user_id').notNull(),
+    logDate: date('log_date', { mode: 'string' }).notNull(),
+    amountMl: integer('amount_ml').notNull(),
+    loggedAt: timestamp('logged_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('water_logs_user_date_idx').on(t.userId, t.logDate),
+    check('water_logs_amount_check', sql`${t.amountMl} between 1 and 3000`),
+  ],
+);
+
+export type WaterLog = typeof waterLogs.$inferSelect;
+export type NewWaterLog = typeof waterLogs.$inferInsert;

@@ -123,6 +123,7 @@ const statements0009 = runMigration('0009_fitness_tables.sql');
 const statements0010 = runMigration('0010_username_and_friends.sql');
 const statements0011 = runMigration('0011_workout_sessions.sql');
 const statements0012 = runMigration('0012_session_link.sql');
+const statements0013 = runMigration('0013_water_logs.sql');
 
 let migrationError = null;
 try {
@@ -164,6 +165,9 @@ try {
 
   for (const stmt of statements0012) await db.exec(stmt);
   console.log(`  · 0012_session_link.sql 执行完成（${statements0012.length} 条语句）`);
+
+  for (const stmt of statements0013) await db.exec(stmt);
+  console.log(`  · 0013_water_logs.sql 执行完成（${statements0013.length} 条语句）`);
 } catch (e) {
   migrationError = e;
 }
@@ -231,23 +235,24 @@ const EXPECTED_FK_TABLES = [
   'profiles',
   'strength_entries',
   'workout_sessions', // 迁移 0011：一次训练会话（0011 另两个外键指向父表，不计在内）
+  'water_logs',       // 迁移 0013：喝水流水
 ];
 check(
-  `11 个指向 auth.users 的外键存在（实际 ${fkRows.length} 个）`,
+  `12 个指向 auth.users 的外键存在（实际 ${fkRows.length} 个）`,
   EXPECTED_FK_TABLES.every((t) => fkTables.includes(t)),
   `缺少：${EXPECTED_FK_TABLES.filter((t) => !fkTables.includes(t)).join(', ')}`,
 );
 
 check(
   '外键都是 ON DELETE CASCADE（删账号时数据跟着清）',
-  // 11 = 上表 9 张各 1 个 + friendships 的 requester_id/addressee_id 两个
-  fkRows.length === 11 &&
+  // 12 = 上表 10 张各 1 个 + friendships 的 requester_id/addressee_id 两个
+  fkRows.length === 12 &&
     (
       await db.query(`
         select count(*)::int c from pg_constraint
         where contype='f' and confrelid='auth.users'::regclass and confdeltype='c'
       `)
-    ).rows[0].c === 11,
+    ).rows[0].c === 12,
   `实际 ${fkRows.length} 个`,
 );
 
@@ -1056,6 +1061,7 @@ await db.exec(`
   grant select, insert, update, delete on public.workout_sessions  to authenticated;
   grant select, insert, update, delete on public.workout_exercises to authenticated;
   grant select, insert, update, delete on public.workout_sets      to authenticated;
+  grant select, insert, update, delete on public.water_logs        to authenticated;
   grant execute on function public.invite_code_is_valid(text)   to anon, authenticated;
   grant execute on function public.consume_invite_code(text)    to authenticated;
   grant execute on function public.is_friend_of(uuid, uuid)     to authenticated;
@@ -1955,6 +1961,72 @@ check('【0011】删会话时动作和组记录一起级联删除', leftSets ===
 
 await db.query(`delete from auth.users where id = $1`, [w1]);
 await db.query(`delete from auth.users where id = $1`, [w2]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  【0013】喝水：自己写、别人读不到、匿名写不进
+// ═══════════════════════════════════════════════════════════════════════
+{
+  const wa = crypto.randomUUID();
+  const wb = crypto.randomUUID();
+  for (const id of [wa, wb]) {
+    await db.query(`insert into auth.users (id, email) values ($1,$2)`, [id, `${id}@example.test`]);
+  }
+
+  await actAs(wa);
+  await db.query(`insert into public.water_logs (user_id, log_date, amount_ml) values ($1,'2026-10-20',250)`, [wa]);
+  await db.query(`insert into public.water_logs (user_id, log_date, amount_ml) values ($1,'2026-10-20',500)`, [wa]);
+  const own = (await db.query(`select coalesce(sum(amount_ml),0)::int total, count(*)::int n from public.water_logs where user_id = $1`, [wa])).rows[0];
+  check('【0013】本人写两条并读回合计 750 mL', Number(own.total) === 750 && Number(own.n) === 2, `total=${own.total} n=${own.n}`);
+
+  await actAs(wb);
+  const other = (await db.query(`select count(*)::int n from public.water_logs`, [])).rows[0];
+  check('【0013】换成别人后一行都读不到（RLS）', Number(other.n) === 0, `实际 ${other.n} 行`);
+
+  await actAs(wa);
+  let dir = null;
+  try {
+    await db.query(`insert into public.water_logs (user_id, log_date, amount_ml) values ($1,'2026-10-20',1)`, [wb]);
+  } catch (err) {
+    dir = err;
+  }
+  check('【0013】不能替别人插入记录', dir !== null, '居然插成功了');
+
+  let bad = null;
+  try {
+    await db.query(`insert into public.water_logs (user_id, log_date, amount_ml) values ($1,'2026-10-20',3001)`, [wa]);
+  } catch (err) {
+    bad = err;
+  }
+  check('【0013】amount_ml 超过 3000 被 CHECK 拦住', bad !== null, '没有报错');
+
+  await actAsAdmin();
+  const goalNull = (await db.query(`select water_goal_ml from public.profiles where id = $1`, [wa])).rows[0].water_goal_ml;
+  check('【0013】water_goal_ml 默认 NULL（表示按体重现算）', goalNull === null, `实际 ${goalNull}`);
+  let badGoal = null;
+  try {
+    await db.query(`update public.profiles set water_goal_ml = 7000 where id = $1`, [wa]);
+  } catch (err) {
+    badGoal = err;
+  }
+  check('【0013】water_goal_ml 上限 6000 被 CHECK 拦住', badGoal !== null, '没有报错');
+  await db.query(`update public.profiles set water_goal_ml = 2200 where id = $1`, [wa]);
+  const goalSet = (await db.query(`select water_goal_ml from public.profiles where id = $1`, [wa])).rows[0].water_goal_ml;
+  check('【0013】water_goal_ml 可正常设为 2200', Number(goalSet) === 2200, `实际 ${goalSet}`);
+
+  await actAsAnon();
+  let anon = null;
+  try {
+    await db.query(`insert into public.water_logs (user_id, log_date, amount_ml) values ($1,'2026-10-20',250)`, [wa]);
+  } catch (err) {
+    anon = err;
+  }
+  check('【0013】anon 写不进水表', anon !== null, 'anon 竟然插入成功');
+
+  await actAsAdmin();
+  await db.query(`delete from auth.users where id in ($1,$2)`, [wa, wb]);
+  const left = (await db.query(`select count(*)::int n from public.water_logs`)).rows[0].n;
+  check('【0013】删账号时水记录级联删除', Number(left) === 0, `还剩 ${left} 行`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

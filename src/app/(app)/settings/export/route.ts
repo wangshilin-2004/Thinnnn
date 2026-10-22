@@ -4,6 +4,7 @@ import {
   getAllCardio,
   getAllMeals,
   getAllStrength,
+  getAllWater,
   getAllWeights,
   MEAL_LABELS,
 } from '@/db/queries';
@@ -12,7 +13,7 @@ import { formatLocalDateTime } from '@/lib/calendar';
 import { toCsvFile } from '@/lib/csv';
 import { todayInTimezone } from '@/lib/nutrition';
 
-/* 导出接口。用法：`/settings/export?kind=meals` / `?kind=weights` / `?kind=training`
+/* 导出接口。用法：`/settings/export?kind=meals` / `?kind=weights` / `?kind=training` / `?kind=water`
  *
  * 为什么是一个 Route Handler 而不是 server action：
  * server action 的返回值要经过 React 的序列化管道，塞不进
@@ -32,7 +33,7 @@ const INTENSITY_TEXT: Record<string, string> = {
   hard: '吃力',
 };
 
-type Kind = 'meals' | 'weights' | 'training';
+type Kind = 'meals' | 'weights' | 'training' | 'water';
 
 const MEAL_COLUMNS = [
   '日期',
@@ -54,6 +55,8 @@ const WEIGHT_COLUMNS = ['日期', '体重(kg)', '测量时间', '备注'] as con
  * 分成两个文件会让「我某天练了什么」这件事被拆开，还得自己对时间 ——
  * 而 CSV 的读者只想按日期排序看一眼。空列（有氧没有组数、力量没有分钟）
  * 留空而不是填 0：0 组和「不是力量训练」是两件事。 */
+const WATER_COLUMNS = ['日期', '时间', '毫升'];
+
 const TRAINING_COLUMNS = [
   '日期',
   '类型',
@@ -78,7 +81,13 @@ export async function GET(request: NextRequest) {
 
   const rawKind = request.nextUrl.searchParams.get('kind');
   const kind: Kind =
-    rawKind === 'weights' ? 'weights' : rawKind === 'training' ? 'training' : 'meals';
+    rawKind === 'weights'
+      ? 'weights'
+      : rawKind === 'training'
+        ? 'training'
+        : rawKind === 'water'
+          ? 'water'
+          : 'meals';
 
   const rows: (string | number | null)[][] = [];
   let filename: string;
@@ -95,6 +104,13 @@ export async function GET(request: NextRequest) {
       ]);
     }
     filename = `slim-weights-${todayInTimezone(user.timezone)}.csv`;
+  } else if (kind === 'water') {
+    const water = await getAllWater(user.id);
+    rows.push([...WATER_COLUMNS]);
+    for (const entry of water) {
+      rows.push([entry.date, formatLocalDateTime(entry.loggedAt.toISOString(), user.timezone), entry.amountMl]);
+    }
+    filename = `slim-water-${todayInTimezone(user.timezone)}.csv`;
   } else if (kind === 'training') {
     const [cardio, strength] = await Promise.all([
       getAllCardio(user.id),

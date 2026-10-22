@@ -12,6 +12,7 @@ import {
   measurements,
   profiles,
   strengthEntries,
+  waterLogs,
   workoutExercises,
   workoutSessions,
   workoutSets,
@@ -860,5 +861,75 @@ export async function getSessionsForDate(
         ),
       )
       .orderBy(desc(workoutSessions.startedAt)),
+  );
+}
+
+/* ── 喝水 ───────────────────────────────────────────────────────── */
+
+export type WaterEntry = {
+  id: string;
+  amountMl: number;
+  loggedAt: Date;
+};
+
+export type WaterDay = {
+  /** 当天所有记录，新的在前（撤销/删除要按这个顺序找最后一条） */
+  entries: WaterEntry[];
+  /** 当天合计，mL */
+  totalMl: number;
+};
+
+/**
+ * 某一天喝了多少水。
+ *
+ * 合计在 JS 里加而不是 SQL SUM()：一天的记录最多十几条，
+ * 连同明细一起取回来一次循环比多一次 round-trip 划算，
+ * 而且「合计」和「明细」必须同源 —— 分开查会出现进度条和
+ * 列表对不上的瞬间。
+ */
+export async function getWaterForDate(userId: string, date: string): Promise<WaterDay> {
+  const entries = await withUser(userId, async (tx) =>
+    tx
+      .select({ id: waterLogs.id, amountMl: waterLogs.amountMl, loggedAt: waterLogs.loggedAt })
+      .from(waterLogs)
+      .where(and(eq(waterLogs.userId, userId), eq(waterLogs.logDate, date)))
+      .orderBy(desc(waterLogs.loggedAt)),
+  );
+  return { entries, totalMl: entries.reduce((sum, e) => sum + e.amountMl, 0) };
+}
+
+/**
+ * 最近 N 天的每日喝水合计。给趋势/回顾用。
+ * 没有记录的日子不会出现在结果里（不是 0）—— 调用方自己补 0，
+ * 因为「没记录」和「喝了 0 mL」在语义上不一样。
+ */
+export async function getWaterSeries(
+  userId: string,
+  from: string,
+  to: string,
+): Promise<{ date: string; totalMl: number }[]> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx
+      .select({ date: waterLogs.logDate, amountMl: waterLogs.amountMl })
+      .from(waterLogs)
+      .where(and(eq(waterLogs.userId, userId), gte(waterLogs.logDate, from), lte(waterLogs.logDate, to)));
+    const byDate = new Map<string, number>();
+    for (const row of rows) byDate.set(row.date, (byDate.get(row.date) ?? 0) + row.amountMl);
+    return [...byDate.entries()]
+      .map(([date, totalMl]) => ({ date, totalMl }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  });
+}
+
+/** 导出用：全部喝水记录，按日期升序。 */
+export async function getAllWater(
+  userId: string,
+): Promise<{ date: string; amountMl: number; loggedAt: Date }[]> {
+  return withUser(userId, async (tx) =>
+    tx
+      .select({ date: waterLogs.logDate, amountMl: waterLogs.amountMl, loggedAt: waterLogs.loggedAt })
+      .from(waterLogs)
+      .where(eq(waterLogs.userId, userId))
+      .orderBy(asc(waterLogs.logDate), asc(waterLogs.loggedAt)),
   );
 }

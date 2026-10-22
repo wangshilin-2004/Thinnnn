@@ -4,12 +4,14 @@ import Link from 'next/link';
 import { CalorieRing, MacroBar } from '@/components/calorie-ring';
 import { SiteHeader } from '@/components/site-header';
 import { WeightLogger } from '@/components/weight-logger';
+import { WaterCard } from '@/components/water-card';
 import { WeightTrend } from '@/components/weight-trend';
-import { getDailySummaries, getMealsForDate, getProfile, getWeightSeries, MEAL_LABELS } from '@/db/queries';
+import { getDailySummaries, getMealsForDate, getProfile, getWaterForDate, getWeightSeries, MEAL_LABELS } from '@/db/queries';
 import { requireUser } from '@/lib/auth';
 import { formatCnDate } from '@/lib/calendar';
 import { addDays, analyzeTrend, DISCLAIMER, movingAverage, todayInTimezone } from '@/lib/nutrition';
 import { portionText } from '@/lib/portion';
+import { defaultWaterGoalMl } from '@/lib/water';
 
 export const metadata: Metadata = { title: '今天' };
 
@@ -26,17 +28,23 @@ export default async function DashboardPage() {
   const from = addDays(today, -(WINDOW_DAYS - 1));
   const weightFrom = addDays(today, -59);
 
-  const [profile, days, weights, meals] = await Promise.all([
+  const [profile, days, weights, meals, water] = await Promise.all([
     getProfile(user.id),
     getDailySummaries(user.id, from, today),
     getWeightSeries(user.id, weightFrom, today),
     getMealsForDate(user.id, today),
+    getWaterForDate(user.id, today),
   ]);
 
   const weightPoints = weights.map((w) => ({ date: w.date, value: w.kg }));
   const avg = movingAverage(weightPoints, 7);
   const latestAvg = [...avg].reverse().find((p) => p.avg !== null)?.avg ?? null;
   const latestWeight = weightPoints[weightPoints.length - 1]?.value ?? null;
+
+  /* 目标水量：用户改过就用改过的，没改过按体重估（33 mL/kg）。
+   * 用 latestWeight 而不是 profile.startWeightKg —— 减重期间体重会变，
+   * 目标也该跟着走，否则越喝越显得「没达标」。 */
+  const waterGoalMl = profile?.waterGoalMl ?? defaultWaterGoalMl(latestWeight);
 
   /* 「今天」这一条单独取出来喂给录入条。
    * 不用 latestWeight：那可能是三天前的值，拿它当「今天已经记过了」会让
@@ -172,6 +180,17 @@ export default async function DashboardPage() {
             {trend.message}
           </p>
         </section>
+
+        {/* 喝水 */}
+        <WaterCard
+          totalMl={water.totalMl}
+          goalMl={waterGoalMl}
+          entries={water.entries.map((e) => ({
+            id: e.id,
+            amountMl: e.amountMl,
+            time: e.loggedAt.toISOString(),
+          }))}
+        />
 
         {/* 今日饮食 */}
         <section className="flex flex-col gap-4 rounded-xl bg-card p-6">

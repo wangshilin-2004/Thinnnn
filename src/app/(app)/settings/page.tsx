@@ -86,6 +86,13 @@ export default async function SettingsPage() {
             >
               训练记录
             </a>
+            <a
+              href="/settings/export?kind=water"
+              download
+              className="touch-target inline-flex items-center justify-center rounded-md border border-separator bg-sunken px-space-5 py-space-3 text-subhead font-semibold text-ink transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              喝水记录
+            </a>
           </div>
         </section>
 
